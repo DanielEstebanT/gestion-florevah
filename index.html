@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Florevah — Costeo e inventario</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+
+<!-- El orden importa: cada archivo puede usar funciones/variables de los anteriores.
+     13-app.js SIEMPRE va de último porque arranca la app (loadState -> render). -->
+<script src="js/01-estado.js"></script>
+<script src="js/02-ui.js"></script>
+<script src="js/03-helpers.js"></script>
+<script src="js/04-insumos.js"></script>
+<script src="js/05-productos.js"></script>
+<script src="js/06-pedidos.js"></script>
+<script src="js/07-balance.js"></script>
+<script src="js/08-analisis.js"></script>
+<script src="js/09-historial.js"></script>
+<script src="js/10-actividad.js"></script>
+<script src="js/11-resumen.js"></script>
+<script src="js/12-inicio.js"></script>
+<script src="js/13-app.js"></script>
+</body>
+</html>
