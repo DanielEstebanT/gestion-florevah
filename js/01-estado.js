@@ -39,14 +39,24 @@
    Ver el final de este archivo para las reglas de seguridad que
    debes pegar en Firestore → pestaña "Reglas".
 ------------------------------------------------------------- */
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "PEGA_AQUI_TU_API_KEY",
-  authDomain: "PEGA_AQUI_TU_PROYECTO.firebaseapp.com",
-  projectId: "PEGA_AQUI_TU_PROYECTO",
-  storageBucket: "PEGA_AQUI_TU_PROYECTO.appspot.com",
-  messagingSenderId: "PEGA_AQUI",
-  appId: "PEGA_AQUI"
+  apiKey: "AIzaSyBnwMHL_S_b21qJGH5VV9i3G2_Ik7c_5yc",
+  authDomain: "floretario-8762c.firebaseapp.com",
+  projectId: "floretario-8762c",
+  storageBucket: "floretario-8762c.firebasestorage.app",
+  messagingSenderId: "712003677703",
+  appId: "1:712003677703:web:9ad37740c6dd19698a04a2"
 };
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
