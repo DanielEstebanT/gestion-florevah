@@ -39,12 +39,6 @@
    Ver el final de este archivo para las reglas de seguridad que
    debes pegar en Firestore → pestaña "Reglas".
 ------------------------------------------------------------- */
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBnwMHL_S_b21qJGH5VV9i3G2_Ik7c_5yc",
   authDomain: "floretario-8762c.firebaseapp.com",
@@ -54,10 +48,8 @@ const firebaseConfig = {
   appId: "1:712003677703:web:9ad37740c6dd19698a04a2"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
 firebase.initializeApp(firebaseConfig);
+
 const db = firebase.firestore();
 const auth = firebase.auth();
 const FV = firebase.firestore.FieldValue; // atajo para increment()/etc.
