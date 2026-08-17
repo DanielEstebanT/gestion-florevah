@@ -39,9 +39,11 @@ function aplicarAbonoPedido(p, nuevoAbonoTotal){
   nuevoAbonoTotal = Math.max(0, Math.min(nuevoAbonoTotal, total));
   const nueva = distribuirAbono(p.costoInversion||0, costoManoObraPedido(p), nuevoAbonoTotal);
   const previa = p.aplicado || {inv:0, mo:0, gan:0};
-  state.totales.inversion += (nueva.inv - previa.inv);
-  state.totales.manoObra += (nueva.mo - previa.mo);
-  state.totales.ganancia += (nueva.gan - previa.gan);
+  const dInv = nueva.inv - previa.inv, dMo = nueva.mo - previa.mo, dGan = nueva.gan - previa.gan;
+  state.totales.inversion += dInv; // optimista en local
+  state.totales.manoObra += dMo;
+  state.totales.ganancia += dGan;
+  ajustarTotales({ inversion: dInv, manoObra: dMo, ganancia: dGan }); // atómico en Firestore
   p.aplicado = nueva;
   p.abono = nuevoAbonoTotal;
   p.saldoPendiente = +(total - nuevoAbonoTotal).toFixed(2);
@@ -258,7 +260,7 @@ function savePedido(){
       p.domicilio = {activo: domicilioActivo, valor: domicilioValor};
       aplicarAbonoPedido(p, p.abono||0); // recalcula el reparto con el nuevo costo de mano de obra (domicilio pudo cambiar)
       logActividad('pedido','editar', `Pedido editado: ${cliente}`);
-      saveState(); toast('Pedido actualizado'); closePedidoForm(); render();
+      guardarPedido(p); toast('Pedido actualizado'); closePedidoForm(); render();
     });
   } else {
     if(pedidoItemsBuilder.length===0){ toast('Agrega al menos un producto al pedido'); return; }
@@ -289,19 +291,25 @@ function savePedido(){
           if(res.faltantes && res.faltantes.length) avisos.push(...res.faltantes);
         }
         // se aparta el pedido completo del stock disponible (recién fabricado o ya existente)
-        if(variante) variante.stock = +(((variante.stock||0)) - it.cantidad).toFixed(4);
-        else p.stock = +(((p.stock||0)) - it.cantidad).toFixed(4);
+        if(variante){
+          variante.stock = +(((variante.stock||0)) - it.cantidad).toFixed(4);
+          ajustarStockVarianteProducto(p.id, variante.id, -it.cantidad);
+        } else {
+          p.stock = +(((p.stock||0)) - it.cantidad).toFixed(4);
+          ajustarStockProducto(p.id, -it.cantidad);
+        }
       });
       const nuevoPedido = {
-        id: uid(), cliente, telefono, fechaEntrega, notas, estado:'pendiente',
+        cliente, telefono, fechaEntrega, notas, estado:'pendiente',
         items: pedidoItemsBuilder, domicilio:{activo:domicilioActivo, valor:domicilioValor},
         costoInversion, costoManoObraBase, abono:0, aplicado:{inv:0,mo:0,gan:0}, saldoPendiente:0,
         creado: today()
       };
+      aplicarAbonoPedido(nuevoPedido, abonoInicial); // reparte el abono inicial y ajusta totales (atómico)
+      guardarPedido(nuevoPedido); // le asigna nuevoPedido.id (id real de Firestore) y persiste el documento completo
       state.pedidos.push(nuevoPedido);
-      aplicarAbonoPedido(nuevoPedido, abonoInicial);
       logActividad('pedido','agregar', `Pedido creado: ${cliente} — ${pedidoItemsBuilder.map(it=>`${it.cantidad}× ${nombreProductoPedidoItem(it)}`).join(', ')}`);
-      saveState(); closePedidoForm(); render();
+      closePedidoForm(); render();
       toast(avisos.length ? `Pedido guardado — ⚠️ insumo insuficiente: ${[...new Set(avisos)].join(', ')} (quedó en negativo)` : (fabricoAlgo ? 'Pedido guardado — se fabricó lo que faltaba y se apartó el stock' : 'Pedido guardado — se apartó del stock que ya tenías'));
     });
   }
@@ -322,9 +330,9 @@ function registrarAbonoPedido(id){
     onConfirm: (vals)=>{
       const monto = parseFloat(vals['fm-abono-pedido']);
       if(!monto || monto<=0){ toast('Pon un monto válido'); return; }
-      aplicarAbonoPedido(p, (p.abono||0) + monto);
+      aplicarAbonoPedido(p, (p.abono||0) + monto); // ajusta totales de forma atómica por su cuenta
+      guardarPedido(p); // persiste el abono/saldo actualizado del pedido
       logActividad('pedido','abonar', `Abono a pedido de ${p.cliente}: ${fmt(monto)}`);
-      saveState();
       toast(p.saldoPendiente<=0 ? 'Pedido pagado por completo' : `Abono registrado — faltan ${fmt(p.saldoPendiente)}`);
       render();
     }
@@ -338,8 +346,13 @@ function cambiarEstadoPedido(id, estado){
       const prod = state.productos.find(x=>x.id===it.productoId);
       if(!prod) return;
       const variante = it.varianteId ? prod.variantes.find(v=>v.id===it.varianteId) : null;
-      if(variante) variante.stock = +(((variante.stock||0)) + it.cantidad).toFixed(4);
-      else prod.stock = +(((prod.stock||0)) + it.cantidad).toFixed(4);
+      if(variante){
+        variante.stock = +(((variante.stock||0)) + it.cantidad).toFixed(4);
+        ajustarStockVarianteProducto(prod.id, variante.id, it.cantidad);
+      } else {
+        prod.stock = +(((prod.stock||0)) + it.cantidad).toFixed(4);
+        ajustarStockProducto(prod.id, it.cantidad);
+      }
     });
     logActividad('pedido','cancelar', `Pedido cancelado: ${p.cliente}`);
     toast('Pedido cancelado — el stock de producto ya fabricado se devolvió al inventario (los insumos no, porque ya se transformaron)');
@@ -347,13 +360,15 @@ function cambiarEstadoPedido(id, estado){
     logActividad('pedido','entregar', `Pedido entregado: ${p.cliente}`);
     toast(estado==='entregado'?'Pedido marcado como entregado':'Pedido cancelado');
   }
-  p.estado = estado; saveState(); render();
+  p.estado = estado;
+  guardarPedido(p);
+  render();
 }
 function deletePedido(id){
   const p = state.pedidos.find(x=>x.id===id);
   state.pedidos = state.pedidos.filter(x=>x.id!==id);
-  if(p) logActividad('pedido','eliminar', `Pedido eliminado: ${p.cliente}`);
-  saveState(); render();
+  if(p){ eliminarPedidoDoc(id); logActividad('pedido','eliminar', `Pedido eliminado: ${p.cliente}`); }
+  render();
 }
 
 /* Se conserva solo por si hay ventas antiguas guardadas de antes de unificar todo en Pedidos.

@@ -22,7 +22,10 @@ function stockStatus(i){
   return 'ok';
 }
 function stockProducto(p, variante){ return (variante ? variante.stock : p.stock) || 0; }
-/* Fabricar = descuenta insumos según receta y suma al inventario de productos terminados */
+/* Fabricar = descuenta insumos según receta y suma al inventario de productos terminados.
+   Sigue siendo síncrona (edita `state` al instante, igual que siempre) — por debajo, cada
+   descuento de insumo y cada suma de stock de producto se manda a Firestore como un
+   increment() atómico, así que si los dos fabrican lo mismo al tiempo, ninguno se pierde. */
 function fabricar(productoId, varianteId, cantidad){
   const p = state.productos.find(x=>x.id===productoId);
   if(!p || !cantidad || cantidad<=0) return {ok:false, faltantes:[]};
@@ -34,10 +37,19 @@ function fabricar(productoId, varianteId, cantidad){
   }).map(r=>state.insumos.find(i=>i.id===r.insumoId).nombre);
   receta.forEach(r=>{
     const ins = state.insumos.find(i=>i.id===r.insumoId);
-    if(ins) ins.stockActual = +(ins.stockActual - r.cantidad*cantidad).toFixed(4);
+    if(ins){
+      const delta = -(r.cantidad*cantidad);
+      ins.stockActual = +(ins.stockActual + delta).toFixed(4);
+      ajustarStockInsumo(ins.id, delta);
+    }
   });
-  if(variante) variante.stock = +(((variante.stock||0)) + cantidad).toFixed(4);
-  else p.stock = +(((p.stock||0)) + cantidad).toFixed(4);
+  if(variante){
+    variante.stock = +(((variante.stock||0)) + cantidad).toFixed(4);
+    ajustarStockVarianteProducto(p.id, variante.id, cantidad);
+  } else {
+    p.stock = +(((p.stock||0)) + cantidad).toFixed(4);
+    ajustarStockProducto(p.id, cantidad);
+  }
   return {ok:true, faltantes:[...new Set(faltantes)]};
 }
 function diasHasta(fechaStr){

@@ -12,6 +12,13 @@
 <div id="app"></div>
 <div class="toast" id="toast"></div>
 
+<!-- SDK de Firebase (versión "compat", pensada para <script> normales sin necesitar un
+     empaquetador — encaja con cómo está armado el resto de esta app). Siempre antes de
+     01-estado.js, que es quien lo usa. -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+
 <!-- El orden importa: cada archivo puede usar funciones/variables de los anteriores.
      13-app.js SIEMPRE va de último porque arranca la app (loadState -> render). -->
 <script src="js/01-estado.js"></script>

@@ -178,7 +178,6 @@ function exportarPedidosCSV(){
   });
   descargarCSV(`florevah-pedidos-${today()}.csv`, headers, rows);
   logActividad('respaldo','registrar', 'Exportó pedidos a CSV');
-  saveState();
   toast(`${rows.length} pedido${rows.length===1?'':'s'} exportado${rows.length===1?'':'s'}`);
 }
 function exportarMovimientosCSV(){
@@ -186,7 +185,6 @@ function exportarMovimientosCSV(){
   const rows = state.movimientos.map(m=>[m.fecha, m.tipo==='ingreso'?'Ingreso externo':'Gasto', bolsaLabel(m.bolsa), m.monto, m.motivo||'']);
   descargarCSV(`florevah-movimientos-${today()}.csv`, headers, rows);
   logActividad('respaldo','registrar', 'Exportó movimientos a CSV');
-  saveState();
   toast(`${rows.length} movimiento${rows.length===1?'':'s'} exportado${rows.length===1?'':'s'}`);
 }
 function exportarVentasCSV(){
@@ -197,7 +195,6 @@ function exportarVentasCSV(){
   });
   descargarCSV(`florevah-ventas-${today()}.csv`, headers, rows);
   logActividad('respaldo','registrar', 'Exportó ventas antiguas a CSV');
-  saveState();
   toast(`${rows.length} venta${rows.length===1?'':'s'} exportada${rows.length===1?'':'s'}`);
 }
 function descargarRespaldo(){
@@ -213,7 +210,6 @@ function descargarRespaldo(){
   a.remove();
   URL.revokeObjectURL(url);
   logActividad('respaldo','registrar', `Respaldo descargado (${fechaArchivo})`);
-  saveState();
   toast('Respaldo descargado');
 }
 function restaurarDesdeArchivo(input){
@@ -239,7 +235,8 @@ function restaurarDesdeArchivo(input){
       if(!state.movimientos) state.movimientos = [];
       if(!state.historialPrecios) state.historialPrecios = [];
       if(!state.actividad) state.actividad = [];
-      saveState(); toast('Respaldo restaurado'); render();
+      toast('Restaurando respaldo…'); render();
+      reemplazarTodoEnFirestore(state).then(()=>toast('Respaldo restaurado')).catch(err=>{ console.error(err); toast('Hubo un problema restaurando — revisa tu conexión'); });
     }, 'Sí, restaurar');
     input.value='';
   };
@@ -249,6 +246,11 @@ function resetToSeed(){
   confirmarAntesDe('¿Restablecer datos de ejemplo?', [
     ['Advertencia', 'Esto borra TODOS tus datos actuales guardados (insumos, productos, pedidos, ventas, movimientos) y los reemplaza por el ejemplo inicial.'],
   ], ()=>{
-    seed(); saveState(); render();
+    sembrando = true;
+    seed();
+    toast('Restableciendo…'); render();
+    reemplazarTodoEnFirestore(state)
+      .then(()=>{ sembrando = false; toast('Datos de ejemplo restablecidos'); })
+      .catch(err=>{ sembrando = false; console.error(err); toast('Hubo un problema restableciendo — revisa tu conexión'); });
   }, 'Sí, borrar y restablecer');
 }

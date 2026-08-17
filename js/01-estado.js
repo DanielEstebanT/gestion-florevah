@@ -1,28 +1,88 @@
 /* ============================================================
-   ESTADO GLOBAL Y PERSISTENCIA
-   El objeto `state` es la unica fuente de verdad de los datos.
-   Aqui vive todo lo que lee/guarda/sincroniza con el storage,
-   mas los helpers basicos (fmt, uid, today) y los datos de ejemplo.
-   Las variables de UI (tab activa, filtros de cada pestana, etc.)
-   NO viven aqui -- cada modulo declara las suyas.
+   ESTADO GLOBAL Y PERSISTENCIA — VERSIÓN FIREBASE
+   El objeto `state` sigue siendo la única fuente de verdad para
+   TODO lo que dibuja la pantalla (nada de esto cambia en el resto
+   de la app). Lo que cambió es CÓMO se guarda:
+
+   - Cada colección (insumos, productos, pedidos, movimientos,
+     historialPrecios, actividad) vive en su propio documento de
+     Firestore, así que dos personas editando cosas distintas al
+     mismo tiempo ya no se pisan.
+   - Los números que los dos podrían tocar a la vez (stock de
+     insumos/productos, y los totales de inversión/mano de
+     obra/ganancia) se ajustan con incrementos atómicos de
+     Firestore, o con transacciones cuando el valor final depende
+     de un cálculo (como el costo promedio de un insumo).
+   - onSnapshot mantiene `state` sincronizado en tiempo real con
+     lo que hace el otro celular, sin tener que preguntar cada
+     20 segundos.
+
+   PATRÓN QUE SE USA EN TODA LA APP (para que el resto del código
+   no tenga que volverse async): cada función de negocio sigue
+   editando `state` en memoria de inmediato (optimista, para que
+   se sienta igual de rápido), y por debajo dispara la escritura
+   a Firestore SIN esperarla ("dispara y olvida", con .catch para
+   avisar si algo falla). onSnapshot es quien corrige cualquier
+   diferencia poco después, y es quien te avisa de lo que hizo tu
+   compañero/a.
    ============================================================ */
 
+/* ---------------- 1. Configuración de Firebase ----------------
+   Pega aquí la configuración de TU proyecto. La sacas así:
+   1. https://console.firebase.google.com → crea un proyecto nuevo
+      (recomendado: uno aparte del de florevah-cromos).
+   2. Activa Firestore Database (modo producción) y Authentication
+      → método "Anónimo".
+   3. Configuración del proyecto (el engranaje) → baja hasta
+      "Tus apps" → ícono web </> → registra la app → copia el
+      objeto de acá abajo.
+   Ver el final de este archivo para las reglas de seguridad que
+   debes pegar en Firestore → pestaña "Reglas".
+------------------------------------------------------------- */
+const firebaseConfig = {
+  apiKey: "PEGA_AQUI_TU_API_KEY",
+  authDomain: "PEGA_AQUI_TU_PROYECTO.firebaseapp.com",
+  projectId: "PEGA_AQUI_TU_PROYECTO",
+  storageBucket: "PEGA_AQUI_TU_PROYECTO.appspot.com",
+  messagingSenderId: "PEGA_AQUI",
+  appId: "PEGA_AQUI"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+const FV = firebase.firestore.FieldValue; // atajo para increment()/etc.
+
+/* ---------------- 2. Estado local (espejo en memoria de Firestore) ---------------- */
 let state = { insumos: [], productos: [], ventas: [], pedidos: [], movimientos: [], historialPrecios: [], actividad: [], totales: { inversion:0, manoObra:0, ganancia:0 } };
 
 const fmt = n => (isFinite(n)?n:0).toLocaleString('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0});
-const uid = () => Math.random().toString(36).slice(2,10);
+const uid = () => Math.random().toString(36).slice(2,10); // ya casi no se usa para ids (Firestore genera los suyos), pero se deja por si algo lo necesita como id temporal
 const today = () => new Date().toISOString().slice(0,10);
 const ahora = () => new Date().toISOString().slice(0,16).replace('T',' ');
 
-/* Historial de precios: registra un cambio de precio de un producto o insumo, con fecha */
+/* Mientras se siembran datos de ejemplo o se restaura un respaldo, las funciones que ajustan
+   stock/totales (fabricar, aplicarAbonoPedido, etc.) siguen editando `state` en memoria con
+   total normalidad, pero NO disparan su escritura individual a Firestore — porque justo después
+   se hace una escritura masiva con el estado ya completo y correcto (sembrarEnFirestore /
+   reemplazarTodoEnFirestore). Si no se hiciera así, esos incrementos de fondo podrían sumarse
+   ENCIMA de lo que ya había en Firestore antes de sembrar, duplicando los totales. */
+let sembrando = false;
+
+/* Historial de precios y actividad son registros que solo se agregan (nunca se editan ni se
+   borran desde la UI), así que se guardan directo con un id generado localmente: se ven al
+   instante en pantalla, y de fondo se escriben a Firestore sin bloquear nada. */
 function logPrecio(tipo, refId, nombre, precioAnterior, precioNuevo, detalle){
   if(precioAnterior===precioNuevo) return;
-  state.historialPrecios.push({ id: uid(), tipo, refId, nombre, precioAnterior, precioNuevo, fecha: today(), detalle: detalle||'' });
+  const ref = db.collection('historialPrecios').doc();
+  const entry = { id: ref.id, tipo, refId, nombre, precioAnterior, precioNuevo, fecha: today(), detalle: detalle||'' };
+  state.historialPrecios.push(entry);
+  ref.set(entry).catch(err=>console.error('Error guardando historial de precio:', err));
 }
-
-/* Registro de actividad: guarda cada acción de crear/editar/eliminar/registrar en toda la app */
 function logActividad(entidad, accion, resumen){
-  state.actividad.push({ id: uid(), entidad, accion, resumen, fecha: today(), hora: ahora() });
+  const ref = db.collection('actividad').doc();
+  const entry = { id: ref.id, entidad, accion, resumen, fecha: today(), hora: ahora() };
+  state.actividad.push(entry);
+  ref.set(entry).catch(err=>console.error('Error guardando actividad:', err));
 }
 function parseCantidad(str){
   if(str===undefined || str===null) return NaN;
@@ -37,28 +97,250 @@ function parseCantidad(str){
   return parseFloat(str.replace(',','.'));
 }
 
-
-const STORE_KEY = 'florevah-data';
-async function saveState(){
-  try{ await window.storage.set(STORE_KEY, JSON.stringify(state), true); }
-  catch(e){ console.error('Error guardando', e); toast('No se pudo guardar (sigue funcionando en esta sesión)'); }
+/* ---------------- 3. Escrituras por colección (insumos, productos, pedidos, movimientos) ----------------
+   Guardan el documento completo — están bien para ediciones de formulario (nombre, receta, cliente,
+   etc.), donde es normal que la última edición gane. NO se usan para números que se suman/restan
+   seguido (eso va en la sección 4, con increment()/transacciones). */
+function guardarInsumo(insumo){
+  const ref = insumo.id ? db.collection('insumos').doc(insumo.id) : db.collection('insumos').doc();
+  insumo.id = ref.id;
+  ref.set(insumo).catch(err=>{ console.error('Error guardando insumo:', err); toast('No se pudo guardar en la nube — revisa tu conexión'); });
+  return insumo;
 }
-async function loadState(silent){
+function eliminarInsumoDoc(id){
+  db.collection('insumos').doc(id).delete().catch(err=>console.error('Error eliminando insumo:', err));
+}
+function guardarProducto(producto){
+  const ref = producto.id ? db.collection('productos').doc(producto.id) : db.collection('productos').doc();
+  producto.id = ref.id;
+  ref.set(producto).catch(err=>{ console.error('Error guardando producto:', err); toast('No se pudo guardar en la nube — revisa tu conexión'); });
+  return producto;
+}
+function eliminarProductoDoc(id){
+  db.collection('productos').doc(id).delete().catch(err=>console.error('Error eliminando producto:', err));
+}
+function guardarPedido(pedido){
+  const ref = pedido.id ? db.collection('pedidos').doc(pedido.id) : db.collection('pedidos').doc();
+  pedido.id = ref.id;
+  ref.set(pedido).catch(err=>{ console.error('Error guardando pedido:', err); toast('No se pudo guardar en la nube — revisa tu conexión'); });
+  return pedido;
+}
+function eliminarPedidoDoc(id){
+  db.collection('pedidos').doc(id).delete().catch(err=>console.error('Error eliminando pedido:', err));
+}
+function guardarMovimiento(mov){
+  const ref = mov.id ? db.collection('movimientos').doc(mov.id) : db.collection('movimientos').doc();
+  mov.id = ref.id;
+  ref.set(mov).catch(err=>{ console.error('Error guardando movimiento:', err); toast('No se pudo guardar en la nube — revisa tu conexión'); });
+  return mov;
+}
+function eliminarMovimientoDoc(id){
+  db.collection('movimientos').doc(id).delete().catch(err=>console.error('Error eliminando movimiento:', err));
+}
+
+/* ---------------- 4. Ajustes atómicos (a prueba de que los dos editen al tiempo) ---------------- */
+
+/* Stock de insumo y de producto (sin variante): un simple increment() de Firestore ya es
+   a prueba de carreras — si los dos fabrican al mismo tiempo, las dos restas se aplican bien. */
+function ajustarStockInsumo(id, delta){
+  if(!delta || sembrando) return;
+  db.collection('insumos').doc(id).set({ stockActual: FV.increment(delta) }, {merge:true})
+    .catch(err=>console.error('Error ajustando stock de insumo:', err));
+}
+function ajustarStockProducto(productoId, delta){
+  if(!delta || sembrando) return;
+  db.collection('productos').doc(productoId).set({ stock: FV.increment(delta) }, {merge:true})
+    .catch(err=>console.error('Error ajustando stock de producto:', err));
+}
+/* El stock de una VARIANTE vive dentro de un arreglo (variantes[]), y Firestore no puede
+   incrementar un número que está adentro de un arreglo directamente — por eso usamos una
+   transacción: lee el documento completo, modifica solo esa variante, y lo vuelve a guardar.
+   Si alguien más edita el mismo producto a mitad de camino, Firestore reintenta solo, así que
+   sigue siendo seguro aunque no sea un increment() puro. */
+function ajustarStockVarianteProducto(productoId, varianteId, delta){
+  if(!delta || sembrando) return;
+  const ref = db.collection('productos').doc(productoId);
+  db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if(!snap.exists) return;
+    const data = snap.data();
+    const variantes = (data.variantes||[]).map(v=>{
+      if(v.id!==varianteId) return v;
+      return { ...v, stock: +(((v.stock||0)) + delta).toFixed(4) };
+    });
+    tx.update(ref, { variantes });
+  }).catch(err=>console.error('Error ajustando stock de variante:', err));
+}
+
+/* Comprar un insumo cambia tres cosas juntas: stock, cantidad comprada acumulada, y el costo
+   promedio (que es un valor DERIVADO: precioTotalComprado/cantidadComprada). Como el resultado
+   depende de leer el valor actual antes de calcular, esto necesita una transacción, no un
+   increment() simple — si no, dos compras al mismo tiempo podrían calcular mal el promedio. */
+function registrarCompraInsumoDB(insumoId, cantidad, precio, onListo){
+  const ref = db.collection('insumos').doc(insumoId);
+  db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.data() || {};
+    const nuevaCantidadComprada = +((data.cantidadComprada||0) + cantidad).toFixed(4);
+    const nuevoPrecioTotal = +((data.precioTotalComprado||0) + precio).toFixed(2);
+    const nuevoPrecioUnidad = nuevaCantidadComprada ? +(nuevoPrecioTotal/nuevaCantidadComprada).toFixed(2) : 0;
+    tx.update(ref, {
+      stockActual: FV.increment(cantidad),
+      cantidadComprada: nuevaCantidadComprada,
+      precioTotalComprado: nuevoPrecioTotal,
+      precioUnidad: nuevoPrecioUnidad,
+    });
+    return { precioUnidadAntes: data.precioUnidad||0, precioUnidadNuevo: nuevoPrecioUnidad };
+  }).then(resultado => { if(onListo) onListo(resultado); })
+    .catch(err=>{ console.error('Error registrando compra:', err); toast('No se pudo registrar la compra — revisa tu conexión'); });
+}
+
+/* Los totales del negocio (inversión / mano de obra / ganancia) viven en UN solo documento
+   compartido por todos. SIEMPRE se tocan con increment() — nunca con una sobreescritura directa
+   de todo el objeto — porque si no, la última persona en guardar borraría lo que la otra sumó
+   mientras tanto. La única excepción es "establecerTotales", para cuando de verdad quieres
+   reemplazar el valor completo (restaurar un respaldo, restablecer los datos de ejemplo). */
+function ajustarTotales({inversion=0, manoObra=0, ganancia=0}){
+  if(sembrando || (!inversion && !manoObra && !ganancia)) return;
+  db.collection('meta').doc('totales').set({
+    inversion: FV.increment(inversion),
+    manoObra: FV.increment(manoObra),
+    ganancia: FV.increment(ganancia),
+  }, {merge:true}).catch(err=>console.error('Error ajustando totales:', err));
+}
+function establecerTotales(valores){
+  return db.collection('meta').doc('totales').set(valores);
+}
+
+/* ---------------- 5. Tiempo real: mantienen `state` al día con lo que hace el otro celular ---------------- */
+function iniciarListeners(){
+  db.collection('insumos').onSnapshot(snap=>{
+    state.insumos = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando insumos:', err));
+
+  db.collection('ventas').onSnapshot(snap=>{
+    state.ventas = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando ventas:', err));
+
+  db.collection('productos').onSnapshot(snap=>{
+    state.productos = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando productos:', err));
+
+  db.collection('pedidos').onSnapshot(snap=>{
+    state.pedidos = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando pedidos:', err));
+
+  db.collection('movimientos').onSnapshot(snap=>{
+    state.movimientos = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando movimientos:', err));
+
+  db.collection('historialPrecios').onSnapshot(snap=>{
+    state.historialPrecios = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando historial de precios:', err));
+
+  db.collection('actividad').onSnapshot(snap=>{
+    state.actividad = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(loaded) render();
+  }, err=>console.error('Error escuchando actividad:', err));
+
+  db.collection('meta').doc('totales').onSnapshot(snap=>{
+    if(snap.exists) state.totales = snap.data();
+    if(loaded) render();
+  }, err=>console.error('Error escuchando totales:', err));
+}
+
+/* ---------------- 6. Puente temporal para lo que aún no está convertido a escrituras finas ----------------
+   Productos, Pedidos, Análisis, Historial, Actividad y Resumen todavía llaman a saveState() como
+   antes (guardar TODO de una). Mientras se van convirtiendo uno por uno, saveState() sigue
+   funcionando: sincroniza cada colección completa a Firestore. No toca "meta/totales" nunca
+   (eso es SIEMPRE por incrementos, ver arriba), para no arriesgarse a pisar un ajuste reciente. */
+/* A esta altura de la migración, todo (insumos, productos, pedidos, movimientos, totales) ya
+   se guarda con su función dedicada. Lo único que sigue usando este "guardado genérico" es el
+   caso heredado de abonar una venta antigua (de antes de unificar todo en Pedidos) — por eso
+   ahora solo sincroniza `ventas`. */
+function saveState(){
+  const batch = db.batch();
+  state.ventas.forEach(v => batch.set(db.collection('ventas').doc(v.id), v));
+  batch.commit().catch(err=>{ console.error('Error guardando venta antigua:', err); toast('No se pudo guardar (revisa tu conexión)'); });
+}
+
+/* Escribe TODO lo que generó seed() de una sola vez, para la primera vez que se usa la base de
+   datos. Usa bloques de máximo 450 operaciones (el límite real de Firestore es 500 por batch). */
+async function sembrarEnFirestore(){
+  const todo = [
+    ...state.insumos.map(x=>['insumos',x]),
+    ...state.productos.map(x=>['productos',x]),
+    ...state.pedidos.map(x=>['pedidos',x]),
+    ...state.historialPrecios.map(x=>['historialPrecios',x]),
+    ...state.actividad.map(x=>['actividad',x]),
+  ];
+  for(let i=0;i<todo.length;i+=450){
+    const trozo = todo.slice(i, i+450);
+    const batch = db.batch();
+    trozo.forEach(([col, doc])=> batch.set(db.collection(col).doc(doc.id), doc));
+    await batch.commit();
+  }
+  // Se establece al final y de forma explícita (no con increment) para que quede exacto,
+  // incluso si algún ajuste atómico se disparó de fondo mientras se sembraba.
+  await establecerTotales(state.totales);
+}
+
+/* Para "Restaurar respaldo" y "Restablecer datos de ejemplo": a diferencia de saveState()
+   (que solo agrega/actualiza), esto también BORRA de Firestore lo que ya no esté en el nuevo
+   estado, y sí sobreescribe "meta/totales" directo (sin increment), porque aquí sí es correcto
+   reemplazar todo por completo — es justo lo que el usuario pidió al restaurar o restablecer. */
+async function reemplazarTodoEnFirestore(nuevoState){
+  const colecciones = ['insumos','productos','pedidos','movimientos','historialPrecios','actividad','ventas'];
+  for(const col of colecciones){
+    const actuales = await db.collection(col).get();
+    const idsNuevos = new Set((nuevoState[col]||[]).map(x=>x.id));
+    const batch = db.batch();
+    let hayOperaciones = false;
+    actuales.docs.forEach(d=>{
+      if(!idsNuevos.has(d.id)){ batch.delete(db.collection(col).doc(d.id)); hayOperaciones = true; }
+    });
+    (nuevoState[col]||[]).forEach(doc=>{
+      batch.set(db.collection(col).doc(doc.id), doc); hayOperaciones = true;
+    });
+    if(hayOperaciones) await batch.commit();
+  }
+  await establecerTotales(nuevoState.totales || {inversion:0, manoObra:0, ganancia:0});
+}
+
+/* ---------------- 7. Arranque ---------------- */
+async function loadState(){
   try{
-    const res = await window.storage.get(STORE_KEY, true);
-    if(res && res.value){ state = JSON.parse(res.value); }
-    else if(!silent) { seed(); await saveState(); }
-  }catch(e){ if(!silent) seed(); }
-  if(!state.pedidos) state.pedidos = [];
-  if(!state.movimientos) state.movimientos = [];
-  if(!state.historialPrecios) state.historialPrecios = [];
-  if(!state.actividad) state.actividad = [];
+    await auth.signInAnonymously();
+  }catch(err){
+    console.error('Error de autenticación con Firebase:', err);
+    toast('No se pudo conectar a Firebase — revisa la configuración en 01-estado.js');
+  }
+  try{
+    const totalesSnap = await db.collection('meta').doc('totales').get();
+    if(!totalesSnap.exists){
+      sembrando = true;
+      seed(); // arma los datos de ejemplo en memoria, tal como siempre
+      await sembrarEnFirestore();
+      sembrando = false;
+    }
+  }catch(err){
+    console.error('Error inicializando datos:', err);
+    sembrando = false;
+  }
+  iniciarListeners();
   loaded = true;
   render();
 }
-// Revisa cada 20s si tu compañero/a agregó o cambió algo, pero NUNCA si hay un formulario,
-// modal, menú, o cualquier campo con algo escrito — así nunca te borra lo que estás editando,
-// sin importar cuánto tiempo pases en eso.
+
+/* Ya no hace falta preguntar cada 20 segundos "¿hay algo nuevo?" — onSnapshot avisa al instante.
+   hayFormularioAbierto() se deja solo por si en el futuro se necesita evitar algún refresco
+   mientras hay un formulario abierto (por ejemplo, si se agrega alguna sincronización manual). */
 function hayFormularioAbierto(){
   if(formDirty) return true;
   const ids = ['add-insumo-form','producto-form','pedido-form'];
@@ -72,9 +354,6 @@ function hayFormularioAbierto(){
   if(escribiendo) return true;
   return false;
 }
-setInterval(()=>{
-  if(!hayFormularioAbierto()) loadState(true);
-}, 20000);
 
 
 function seed(){
@@ -220,8 +499,13 @@ function seed(){
       const disponible = stockProducto(prod, variante);
       const faltante = +(it.cantidad - disponible).toFixed(4);
       if(faltante > 0) fabricar(it.productoId, it.varianteId, faltante);
-      if(variante) variante.stock = +(((variante.stock||0)) - it.cantidad).toFixed(4);
-      else prod.stock = +(((prod.stock||0)) - it.cantidad).toFixed(4);
+      if(variante){
+        variante.stock = +(((variante.stock||0)) - it.cantidad).toFixed(4);
+        ajustarStockVarianteProducto(prod.id, variante.id, -it.cantidad);
+      } else {
+        prod.stock = +(((prod.stock||0)) - it.cantidad).toFixed(4);
+        ajustarStockProducto(prod.id, -it.cantidad);
+      }
     });
     const pedido = { id: uid(), cliente, telefono, fechaEntrega, notas, estado:'pendiente', items, domicilio: domicilio||{activo:false,valor:0}, costoInversion, costoManoObraBase, abono:0, aplicado:{inv:0,mo:0,gan:0}, saldoPendiente:0, creado: today() };
     state.pedidos.push(pedido);
@@ -235,3 +519,21 @@ function seed(){
   crearPedidoSeed('Pedidos aliado — Plaza del Carnaval', '', d(6), 'Al por mayor',
     [{productoId:byNameProd('Llavero de pulpo'), varianteId:null, cantidad:24}], {activo:false, valor:0}, 0);
 }
+
+/* ============================================================
+   REGLAS DE SEGURIDAD DE FIRESTORE (pégalas en la consola de
+   Firebase → Firestore Database → pestaña "Reglas"):
+
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /{document=**} {
+         allow read, write: if request.auth != null;
+       }
+     }
+   }
+
+   Esto permite leer/escribir solo a quien haya iniciado sesión
+   (aunque sea anónima, como hace esta app) — bloquea a cualquiera
+   que no haya pasado por tu app.
+   ============================================================ */

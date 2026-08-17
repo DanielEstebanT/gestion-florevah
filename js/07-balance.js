@@ -79,10 +79,12 @@ function registrarMovimientoUI(){
     ['Motivo', motivo||'—'],
   ], ()=>{
     const delta = tipo==='ingreso' ? monto : -monto;
-    state.totales[bolsa] += delta;
-    state.movimientos.push({ id: uid(), fecha, tipo, bolsa, monto, motivo, creado: today() });
+    state.totales[bolsa] += delta; // optimista en local, para que el número cambie ya mismo en pantalla
+    ajustarTotales({ [bolsa]: delta }); // atómico en Firestore — nunca se pisa con lo que haga tu compañero/a
+    const mov = { fecha, tipo, bolsa, monto, motivo, creado: today() };
+    guardarMovimiento(mov); // le asigna mov.id (id real de Firestore)
+    state.movimientos.push(mov);
     logActividad('movimiento','registrar', `${tipo==='ingreso'?'Ingreso':'Gasto'} en ${bolsaLabel(bolsa)}: ${fmt(monto)}${motivo?' — '+motivo:''}`);
-    saveState();
     balancePage = 1;
     toast(tipo==='ingreso' ? `Se sumaron ${fmt(monto)} a ${bolsaLabel(bolsa)}` : `Se restaron ${fmt(monto)} de ${bolsaLabel(bolsa)}`);
     render();
@@ -98,8 +100,10 @@ function deleteMovimiento(id){
   ], ()=>{
     const delta = m.tipo==='ingreso' ? -m.monto : m.monto;
     state.totales[m.bolsa] += delta;
+    ajustarTotales({ [m.bolsa]: delta });
     state.movimientos = state.movimientos.filter(x=>x.id!==id);
+    eliminarMovimientoDoc(id);
     logActividad('movimiento','eliminar', `Movimiento eliminado: ${bolsaLabel(m.bolsa)} ${fmt(m.monto)}`);
-    saveState(); render();
+    render();
   }, 'Sí, eliminar');
 }

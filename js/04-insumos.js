@@ -160,7 +160,7 @@ function saveInsumo(){
       i.nombre=nombre; i.unidad=unidad; i.distribuidor=dist; i.origen=origen; i.prioridad=prioridad; i.stockMinimo=umbral;
       i.stockActual = nuevoStock;
       logActividad('insumo','editar', `Insumo editado: ${nombre}`);
-      saveState(); toast('Insumo actualizado'); closeInsumoForm(); render();
+      guardarInsumo(i); toast('Insumo actualizado'); closeInsumoForm(); render();
     });
   } else {
     const cant = parseFloat(document.getElementById('ni-cant').value)||0;
@@ -175,11 +175,12 @@ function saveInsumo(){
       ['Umbral de alerta', `${umbral} ${unidad}`],
       ['Origen', origen==='local'?'Mercado local':'Mercado extranjero'],
     ], ()=>{
-      const nuevoId = uid();
-      state.insumos.push({ id: nuevoId, nombre, unidad, origen, prioridad, stockActual: cant, cantidadComprada: cant, precioTotalComprado: precio, precioUnidad, distribuidor: dist, stockMinimo: umbral });
-      logPrecio('insumo', nuevoId, nombre, null, precioUnidad, 'Precio inicial');
+      const nuevo = { nombre, unidad, origen, prioridad, stockActual: cant, cantidadComprada: cant, precioTotalComprado: precio, precioUnidad, distribuidor: dist, stockMinimo: umbral };
+      guardarInsumo(nuevo); // asigna nuevo.id al vuelo (id real de Firestore)
+      state.insumos.push(nuevo); // optimista: se ve al instante, onSnapshot lo confirma después
+      logPrecio('insumo', nuevo.id, nombre, null, precioUnidad, 'Precio inicial');
       logActividad('insumo','agregar', `Insumo agregado: ${nombre}`);
-      saveState(); toast('Insumo agregado'); render();
+      toast('Insumo agregado'); render();
     });
   }
 }
@@ -190,11 +191,13 @@ function editInsumo(id){
 }
 function updateUmbral(id,val){
   const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  i.stockMinimo = parseFloat(val)||0; saveState();
+  i.stockMinimo = parseFloat(val)||0;
+  db.collection('insumos').doc(id).update({ stockMinimo: i.stockMinimo }).catch(err=>console.error('Error actualizando umbral:', err));
 }
 function updatePrioridad(id,val){
   const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  i.prioridad = val; saveState();
+  i.prioridad = val;
+  db.collection('insumos').doc(id).update({ prioridad: val }).catch(err=>console.error('Error actualizando prioridad:', err));
 }
 function deleteInsumo(id){
   const i = state.insumos.find(x=>x.id===id); if(!i) return;
@@ -203,8 +206,9 @@ function deleteInsumo(id){
     ['Advertencia', 'No afecta recetas ya guardadas, pero dejarán de calcular su costo con este insumo.'],
   ], ()=>{
     state.insumos = state.insumos.filter(x=>x.id!==id);
+    eliminarInsumoDoc(id);
     logActividad('insumo','eliminar', `Insumo eliminado: ${i.nombre}`);
-    saveState(); render();
+    render();
   }, 'Sí, eliminar');
 }
 function openCompra(id){
@@ -222,13 +226,16 @@ function openCompra(id){
       if(!cant || cant<=0 || isNaN(precio)){ toast('Completa cantidad y precio válidos'); return; }
       const precioUnidadAntes = i.precioUnidad;
       const precioEstaCompra = +(precio/cant).toFixed(2);
+      // Optimista en local para que se vea al instante — el valor EXACTO lo calcula
+      // la transacción de Firestore (a prueba de que compren dos cosas a la vez).
       i.stockActual = +(i.stockActual + cant).toFixed(4);
       i.cantidadComprada = +(i.cantidadComprada + cant).toFixed(4);
       i.precioTotalComprado = +(i.precioTotalComprado + precio).toFixed(2);
       i.precioUnidad = i.cantidadComprada ? +(i.precioTotalComprado/i.cantidadComprada).toFixed(2) : 0;
+      registrarCompraInsumoDB(i.id, cant, precio);
       logPrecio('insumo', i.id, i.nombre, precioUnidadAntes, precioEstaCompra, `Compra de ${cant} ${i.unidad} a ${fmt(precioEstaCompra)}/${i.unidad.replace(/s$/,'')}${i.distribuidor?' — '+i.distribuidor:''}`);
       logActividad('compra','registrar', `Compra: ${cant} ${i.unidad} de ${i.nombre} por ${fmt(precio)}`);
-      saveState(); toast('Compra registrada — costo unitario actualizado'); render();
+      toast('Compra registrada — costo unitario actualizado'); render();
     }
   });
 }

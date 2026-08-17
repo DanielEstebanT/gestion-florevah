@@ -305,7 +305,7 @@ function saveProducto(){
       state.productos[idx] = {...state.productos[idx], ...data};
       logPrecio('producto', editId, nombre, precioAnterior, data.precioFinal, 'Editado manualmente');
       logActividad('producto','editar', `Producto editado: ${nombre}`);
-      saveState(); toast('Producto guardado'); closeProductoForm(); render();
+      guardarProducto(state.productos[idx]); toast('Producto guardado'); closeProductoForm(); render();
     });
   } else {
     const mp = recetaMPBuilder.length ? costoDeReceta(recetaMPBuilder) : data.materiaPrimaManual;
@@ -319,11 +319,12 @@ function saveProducto(){
       ['Variantes', variantesValidas.length ? variantesValidas.map(v=>v.nombre).join(', ') : 'Ninguna'],
       ['Al por mayor', wholesale ? 'Sí' : 'No'],
     ], ()=>{
-      const nuevoId = uid();
-      state.productos.push({id: nuevoId, stock: 0, ...data});
-      logPrecio('producto', nuevoId, nombre, null, data.precioFinal, 'Precio inicial');
+      const nuevo = { stock: 0, ...data };
+      guardarProducto(nuevo); // le asigna nuevo.id (id real de Firestore)
+      state.productos.push(nuevo);
+      logPrecio('producto', nuevo.id, nombre, null, data.precioFinal, 'Precio inicial');
       logActividad('producto','agregar', `Producto agregado: ${nombre}`);
-      saveState(); toast('Producto agregado'); closeProductoForm(); render();
+      toast('Producto agregado'); closeProductoForm(); render();
     });
   }
 }
@@ -342,9 +343,8 @@ function fabricarPrompt(productoId, varianteId){
     onConfirm: (vals)=>{
       const cantidad = parseFloat(vals['fm-fabricar-cant']);
       if(!cantidad || cantidad<=0){ toast('Pon una cantidad válida'); return; }
-      const res = fabricar(productoId, varianteId, cantidad);
+      const res = fabricar(productoId, varianteId, cantidad); // fabricar() ya persiste solo (increment atómico)
       logActividad('fabricacion','registrar', `Fabricadas ${cantidad} u. de ${p.nombre}${variante?' — '+variante.nombre:''}`);
-      saveState();
       if(res.faltantes.length) toast(`Se fabricaron ${cantidad} u. — ⚠️ insumo insuficiente: ${res.faltantes.join(', ')} (quedó en negativo)`);
       else toast(`Se fabricaron ${cantidad} unidades — insumos descontados`);
       render();
@@ -359,7 +359,8 @@ function deleteProducto(id){
     ['Advertencia', 'Esta acción no se puede deshacer.'],
   ], ()=>{
     state.productos = state.productos.filter(x=>x.id!==id);
+    eliminarProductoDoc(id);
     logActividad('producto','eliminar', `Producto eliminado: ${p.nombre}`);
-    saveState(); render();
+    render();
   }, 'Sí, eliminar');
 }
