@@ -2,8 +2,18 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Florevah — Costeo e inventario</title>
+
+<!-- PWA: esto es lo que le dice al celular "esto se puede instalar como app" -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#A57BC4">
+<link rel="icon" href="icons/favicon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="florevah">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
@@ -34,5 +44,16 @@
 <script src="js/11-resumen.js"></script>
 <script src="js/12-inicio.js"></script>
 <script src="js/13-app.js"></script>
+
+<!-- Registro del service worker (le da a la app soporte offline básico y hace que el
+     celular la reconozca como "instalable"). Si falla (ej. abriéndola en localhost sin
+     https), no rompe nada — la app sigue funcionando normal, solo sin esto. -->
+<script>
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(err => console.error('Service worker no se pudo registrar:', err));
+    });
+  }
+</script>
 </body>
 </html>

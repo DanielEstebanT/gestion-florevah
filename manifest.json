@@ -1,0 +1,32 @@
+{
+  "name": "florevah — Costeo e inventario",
+  "short_name": "florevah",
+  "description": "Inventario, costeo, pedidos y balance para el emprendimiento florevah.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F7EEFB",
+  "theme_color": "#A57BC4",
+  "lang": "es-CO",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
