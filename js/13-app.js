@@ -74,8 +74,18 @@ function intentarLogin(){
   errEl.textContent = '';
   if(!email || !pass){ errEl.textContent = 'Completa correo y contraseña.'; return; }
   iniciarSesion(email, pass, recordar).catch(err=>{
-    console.error('Error de login:', err);
-    errEl.textContent = 'Correo o contraseña incorrectos.';
+    console.error('Error de login:', err.code, err.message);
+    const mensajes = {
+      'auth/user-not-found': 'No existe una cuenta con ese correo. Créala en Firebase console → Authentication → Users → Add user.',
+      'auth/wrong-password': 'La contraseña no coincide con ese correo.',
+      'auth/invalid-email': 'Ese correo no tiene un formato válido.',
+      'auth/invalid-credential': 'Correo o contraseña incorrectos, o la cuenta no existe todavía.',
+      'auth/operation-not-allowed': 'El método "Correo/contraseña" está apagado en Firebase console → Authentication → Sign-in method. Actívalo primero.',
+      'auth/too-many-requests': 'Demasiados intentos fallidos — espera un momento y vuelve a intentar.',
+      'auth/network-request-failed': 'No hay conexión a internet, o no puede llegar a Firebase.',
+      'auth/unauthorized-domain': 'Este dominio no está autorizado en Firebase console → Authentication → Settings → Authorized domains.',
+    };
+    errEl.textContent = mensajes[err.code] || `Error inesperado (${err.code||'sin código'}) — revisa la consola del navegador (F12).`;
   });
 }
 
