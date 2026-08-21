@@ -55,7 +55,13 @@ function renderLogin(){
         <h1 class="display" style="font-size:22px;margin:14px 0 2px">florevah</h1>
         <div class="sub" style="margin-bottom:20px">Entra con tu cuenta para ver el inventario</div>
         <div class="field"><label>Correo</label><input id="login-email" type="email" autocomplete="username" placeholder="tú@correo.com"></div>
-        <div class="field"><label>Contraseña</label><input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+        <div class="field">
+          <label>Contraseña</label>
+          <div class="login-pass-wrap">
+            <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••">
+            <button type="button" class="login-pass-toggle" onclick="togglePassVisible()" aria-label="Mostrar contraseña">${svgIcon('eye')}</button>
+          </div>
+        </div>
         <label class="login-remember">
           <input type="checkbox" id="login-recordar" checked style="width:auto">
           <span>Recuérdame en este dispositivo</span>
@@ -65,6 +71,14 @@ function renderLogin(){
       </div>
     </div>
   `;
+}
+function togglePassVisible(){
+  const input = document.getElementById('login-pass');
+  const btn = document.querySelector('.login-pass-toggle');
+  const mostrar = input.type === 'password';
+  input.type = mostrar ? 'text' : 'password';
+  btn.innerHTML = svgIcon(mostrar ? 'eye-off' : 'eye');
+  btn.setAttribute('aria-label', mostrar ? 'Ocultar contraseña' : 'Mostrar contraseña');
 }
 function intentarLogin(){
   const email = document.getElementById('login-email').value.trim();
