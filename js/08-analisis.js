@@ -1,17 +1,23 @@
 /* ============================================================
    PESTANA: ANALISIS DE VENTAS
+   Las "ventas" que se analizan aquí son los PEDIDOS ya entregados (por eso, además, un pedido
+   solo se puede marcar como entregado cuando ya está pagado por completo — así estos números
+   siempre reflejan plata que ya entró de verdad, no promesas).
    ============================================================ */
 
-let analisisRango = '30d';
+let analisisRango = 'semana'; // 'dia' | 'semana' | 'mes' | 'todo'
 function fechaDentroDeRango(fechaStr){
-  if(analisisRango==='todo' || !fechaStr) return true;
-  const dias = analisisRango==='7d' ? 7 : 30;
+  if(analisisRango==='todo') return true;
+  if(!fechaStr) return true;
+  if(analisisRango==='dia') return fechaStr===today();
+  const dias = analisisRango==='semana' ? 7 : 30;
   const dt = new Date(fechaStr+'T00:00:00');
   const limite = new Date(today()+'T00:00:00'); limite.setDate(limite.getDate()-dias);
   return dt >= limite;
 }
-function ventasFiltradas(){ return state.ventas.filter(v=>fechaDentroDeRango(v.fecha)); }
-function pedidosFiltrados(){ return state.pedidos.filter(p=>p.estado!=='cancelado' && fechaDentroDeRango(p.creado)); }
+function ventasFiltradas(){ return state.ventas.filter(v=>fechaDentroDeRango(v.fecha)); } // ventas heredadas, de antes de unificar todo en Pedidos
+function pedidosFiltrados(){ return state.pedidos.filter(p=>p.estado!=='cancelado' && fechaDentroDeRango(p.creado)); } // para "qué se pide", sin importar si ya se entregó
+function pedidosEntregadosFiltrados(){ return state.pedidos.filter(p=>p.estado==='entregado' && fechaDentroDeRango(p.fechaEntregado||p.creado)); } // para "qué ya se vendió de verdad"
 
 function claveProducto(productoId, varianteId){ return productoId+'::'+(varianteId||''); }
 function nombreClaveProducto(productoId, varianteId){
@@ -21,7 +27,8 @@ function nombreClaveProducto(productoId, varianteId){
   return p.nombre + (v?` — ${v.nombre}`:'');
 }
 
-/* Popularidad: combina ventas registradas + pedidos (no cancelados) para saber qué se pide/vende más */
+/* Popularidad: combina ventas heredadas + TODOS los pedidos no cancelados (entregados o no),
+   para saber qué se pide/vende más — esto es sobre demanda, no importa si ya se cobró todo. */
 function rankingPopularidad(){
   const map = {};
   ventasFiltradas().forEach(v=>{
@@ -39,7 +46,10 @@ function rankingPopularidad(){
   return Object.values(map).sort((a,b)=>b.unidades-a.unidades);
 }
 
-/* Rentabilidad: solo de ventas registradas, porque ahí sabemos la ganancia real por unidad */
+/* Rentabilidad: ventas heredadas (ganancia ya conocida por unidad) + pedidos YA ENTREGADOS
+   (por eso ya pagados al 100%, así que su ganancia final es exacta, no una promesa a medias).
+   Cuando un pedido trae varios productos mezclados, la ganancia de ese pedido se reparte entre
+   sus productos proporcional a lo que vale cada uno dentro del pedido. */
 function rankingRentabilidad(){
   const map = {};
   ventasFiltradas().forEach(v=>{
@@ -47,10 +57,21 @@ function rankingRentabilidad(){
     if(!map[k]) map[k] = { productoId:v.productoId, varianteId:v.varianteId, unidades:0, ingresos:0, ganancia:0 };
     map[k].unidades += v.cantidad; map[k].ingresos += v.total; map[k].ganancia += v.ganancia;
   });
+  pedidosEntregadosFiltrados().forEach(p=>{
+    const gananciaPedido = (p.aplicado && p.aplicado.gan) || 0;
+    const totalProductos = pedidoProductosTotal(p);
+    p.items.forEach(it=>{
+      const k = claveProducto(it.productoId, it.varianteId);
+      if(!map[k]) map[k] = { productoId:it.productoId, varianteId:it.varianteId, unidades:0, ingresos:0, ganancia:0 };
+      const ingresoItem = (it.precioUnitario||0)*it.cantidad;
+      const gananciaItem = totalProductos>0 ? gananciaPedido * (ingresoItem/totalProductos) : 0;
+      map[k].unidades += it.cantidad;
+      map[k].ingresos += ingresoItem;
+      map[k].ganancia += gananciaItem;
+    });
+  });
   return Object.values(map).map(r=>({...r, margen: r.ingresos>0 ? (r.ganancia/r.ingresos*100) : 0})).sort((a,b)=>b.ganancia-a.ganancia);
 }
-
-
 
 function barsHTML(rows, valueKey, labelFn, fmtFn, goldTop3){
   if(rows.length===0) return `<div class="empty">Sin datos suficientes en este rango todavía.</div>`;
@@ -66,7 +87,7 @@ function barsHTML(rows, valueKey, labelFn, fmtFn, goldTop3){
 function generarInsights(popularidad, rentabilidad){
   const insights = [];
   if(popularidad.length===0){
-    insights.push({txt:'Todavía no hay ventas ni pedidos en este rango de fechas para analizar. Prueba con "Todo" o registra algunas ventas primero.', warn:false});
+    insights.push({txt:'Todavía no hay pedidos en este rango de fechas para analizar. Prueba con "Todo".', warn:false});
     return insights;
   }
   const estrella = popularidad[0];
@@ -87,7 +108,7 @@ function generarInsights(popularidad, rentabilidad){
   }
   const sinMovimiento = state.productos.filter(p=>!popularidad.find(r=>r.productoId===p.id));
   if(sinMovimiento.length>0 && sinMovimiento.length<state.productos.length){
-    insights.push({txt:`${sinMovimiento.length} producto${sinMovimiento.length===1?'':'s'} sin ninguna venta ni pedido en este período: ${sinMovimiento.slice(0,4).map(p=>p.nombre).join(', ')}${sinMovimiento.length>4?'…':''}. Revisa si vale la pena destacarlos o si conviene descontinuarlos.`, warn:false});
+    insights.push({txt:`${sinMovimiento.length} producto${sinMovimiento.length===1?'':'s'} sin ningún pedido en este período: ${sinMovimiento.slice(0,4).map(p=>p.nombre).join(', ')}${sinMovimiento.length>4?'…':''}. Revisa si vale la pena destacarlos o si conviene descontinuarlos.`, warn:false});
   }
   const cobrar = totalPorCobrar();
   if(cobrar>0) insights.push({txt:`Tienes <b>${fmt(cobrar)}</b> por cobrar entre pedidos y ventas con abono parcial — revisa la pestaña Resumen para ver a quién.`, warn:true});
@@ -100,35 +121,40 @@ function renderAnalisis(){
   const popularidad = rankingPopularidad();
   const rentabilidad = rankingRentabilidad();
   const ventasR = ventasFiltradas();
-  const pedidosR = pedidosFiltrados();
+  const entregadosR = pedidosEntregadosFiltrados();
+  const pendientesR = state.pedidos.filter(p=>p.estado==='pendiente' && fechaDentroDeRango(p.creado));
 
-  const totalIngresosVentas = ventasR.reduce((s,v)=>s+v.total,0);
-  const totalUnidadesVentas = ventasR.reduce((s,v)=>s+v.cantidad,0);
-  const totalGananciaVentas = ventasR.reduce((s,v)=>s+v.ganancia,0);
-  const ticketProm = ventasR.length ? totalIngresosVentas/ventasR.length : 0;
-  const margenProm = totalIngresosVentas>0 ? (totalGananciaVentas/totalIngresosVentas*100) : 0;
-  const valorPedidos = pedidosR.reduce((s,p)=>s+pedidoTotal(p),0);
+  // Estos 4 números son los "montos fijos": solo se mueven cuando de verdad entra o sale una
+  // venta (pedido entregado), NUNCA por un gasto o ingreso manual de Balance.
+  const totalIngresos = entregadosR.reduce((s,p)=>s+pedidoTotal(p),0) + ventasR.reduce((s,v)=>s+v.total,0);
+  const totalUnidades = entregadosR.reduce((s,p)=>s+p.items.reduce((s2,it)=>s2+it.cantidad,0),0) + ventasR.reduce((s,v)=>s+v.cantidad,0);
+  const totalGanancia = entregadosR.reduce((s,p)=>s+((p.aplicado&&p.aplicado.gan)||0),0) + ventasR.reduce((s,v)=>s+v.ganancia,0);
+  const numTransacciones = entregadosR.length + ventasR.length;
+  const ticketProm = numTransacciones ? totalIngresos/numTransacciones : 0;
+  const margenProm = totalIngresos>0 ? (totalGanancia/totalIngresos*100) : 0;
+  const valorPendientes = pendientesR.reduce((s,p)=>s+pedidoTotal(p),0);
 
   const rangoChip = (v,label) => `<button class="filter-chip date-chip ${analisisRango===v?'active':''}" onclick="setAnalisisRango('${v}')">${label}</button>`;
   const insights = generarInsights(popularidad, rentabilidad);
 
   return `
     <div class="card">
-      <div class="section-head"><div><h2>Análisis de ventas</h2><div class="sub">Qué se vende más, qué deja más plata, y qué vale la pena ajustar — como un analista de datos, pero con tus propios números.</div></div></div>
+      <div class="section-head"><div><h2>Análisis de ventas</h2><div class="sub">Qué se vende más, qué deja más plata, y qué vale la pena ajustar — como un analista de datos, pero con tus propios números. Cuenta solo pedidos ya <b>entregados y pagados</b>, así que estos montos no se mueven por gastos ni préstamos de Balance.</div></div></div>
       <div class="search-row">
-        ${rangoChip('7d','Últimos 7 días')}
-        ${rangoChip('30d','Últimos 30 días')}
+        ${rangoChip('dia','Hoy')}
+        ${rangoChip('semana','Esta semana')}
+        ${rangoChip('mes','Este mes')}
         ${rangoChip('todo','Todo')}
       </div>
     </div>
 
     <div class="apart-grid">
-      <div class="apart apart-inv"><div class="label">Ingresos por ventas</div><div class="amount">${fmt(totalIngresosVentas)}</div></div>
-      <div class="apart apart-labor"><div class="label">Unidades vendidas</div><div class="amount">${totalUnidadesVentas}</div></div>
-      <div class="apart apart-profit"><div class="label">Ticket promedio</div><div class="amount">${fmt(ticketProm)}</div></div>
+      <div class="apart apart-inv"><div class="label">Ventas (ingresos)</div><div class="amount">${fmt(totalIngresos)}</div></div>
+      <div class="apart apart-labor"><div class="label">Unidades vendidas</div><div class="amount">${totalUnidades}</div></div>
+      <div class="apart apart-profit"><div class="label">Ganancia total</div><div class="amount">${fmt(totalGanancia)}</div></div>
       <div class="apart apart-cobrar" style="background:var(--lilac-deep)"><div class="label">Margen promedio</div><div class="amount">${margenProm.toFixed(0)}%</div></div>
     </div>
-    ${valorPedidos>0?`<div class="helptext" style="margin:-10px 0 16px">+ ${fmt(valorPedidos)} en pedidos de este período (no incluidos arriba, esos se cuentan cuando entran como venta).</div>`:''}
+    <div class="helptext" style="margin:-10px 0 16px">Ticket promedio: ${fmt(ticketProm)} (${numTransacciones} venta${numTransacciones===1?'':'s'} cerrada${numTransacciones===1?'':'s'}).${valorPendientes>0?` + ${fmt(valorPendientes)} en pedidos pendientes de entregar (no cuentan aquí todavía).`:''}</div>
 
     <div class="card">
       <div class="section-head"><div><h2>Recomendaciones</h2></div></div>
@@ -137,13 +163,13 @@ function renderAnalisis(){
 
     <div class="card">
       <h2>Lo que más se pide (unidades)</h2>
-      <div class="sub">Ventas registradas + pedidos, así sepas qué preparar seguido.</div>
+      <div class="sub">Todos los pedidos activos (entregados o no), así sepas qué preparar seguido.</div>
       ${barsHTML(popularidad.slice(0,8), 'unidades', r=>nombreClaveProducto(r.productoId,r.varianteId), r=>`${r.unidades} u. · ${fmt(r.ingresos)}`, true)}
     </div>
 
     <div class="card">
       <h2>Lo que más ganancia deja</h2>
-      <div class="sub">Solo ventas ya registradas (donde se conoce la ganancia real). No siempre es lo mismo que "lo más vendido".</div>
+      <div class="sub">Solo pedidos ya entregados y pagados por completo (ahí la ganancia ya es exacta). No siempre es lo mismo que "lo más vendido".</div>
       ${barsHTML(rentabilidad.slice(0,8), 'ganancia', r=>nombreClaveProducto(r.productoId,r.varianteId), r=>`${fmt(r.ganancia)} · margen ${r.margen.toFixed(0)}%`, true)}
     </div>
   `;

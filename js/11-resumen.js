@@ -16,16 +16,19 @@ function totalesPeriodo(rango){
     }
     return true;
   };
-  if(rango==='total') return { inversion: state.totales.inversion, manoObra: state.totales.manoObra, ganancia: state.totales.ganancia };
-  let inversion=0, manoObra=0, ganancia=0;
-  state.ventas.forEach(v=>{ if(enRango(v.fecha)){ inversion+=v.inversion||0; manoObra+=v.manoObra||0; ganancia+=v.ganancia||0; } });
-  state.pedidos.forEach(p=>{ if(p.aplicado && enRango(p.creado)){ inversion+=p.aplicado.inv||0; manoObra+=p.aplicado.mo||0; ganancia+=p.aplicado.gan||0; } });
+  if(rango==='total') return { inversion: state.totales.inversion, manoObraTradicional: state.totales.manoObraTradicional||0, manoObraDomicilio: state.totales.manoObraDomicilio||0, ganancia: state.totales.ganancia };
+  let inversion=0, manoObraTradicional=0, manoObraDomicilio=0, ganancia=0;
+  state.ventas.forEach(v=>{ if(enRango(v.fecha)){ inversion+=v.inversion||0; manoObraTradicional+=v.manoObra||0; ganancia+=v.ganancia||0; } });
+  state.pedidos.forEach(p=>{ if(p.aplicado && enRango(p.creado)){ inversion+=p.aplicado.inv||0; manoObraTradicional+=p.aplicado.moTrad||0; manoObraDomicilio+=p.aplicado.moDom||0; ganancia+=p.aplicado.gan||0; } });
   state.movimientos.forEach(m=>{
     if(!enRango(m.fecha)) return;
     const d = m.tipo==='ingreso' ? m.monto : -m.monto;
-    if(m.bolsa==='inversion') inversion+=d; else if(m.bolsa==='manoObra') manoObra+=d; else ganancia+=d;
+    if(m.bolsa==='inversion') inversion+=d;
+    else if(m.bolsa==='manoObraTradicional') manoObraTradicional+=d;
+    else if(m.bolsa==='manoObraDomicilio') manoObraDomicilio+=d;
+    else ganancia+=d;
   });
-  return { inversion, manoObra, ganancia };
+  return { inversion, manoObraTradicional, manoObraDomicilio, ganancia };
 }
 function setResumenRango(v){ resumenRango=v; render(); }
 function renderResumen(){
@@ -65,13 +68,14 @@ function renderResumen(){
 
   const pedidosRecientes = state.pedidos.filter(p=>p.estado!=='cancelado').slice().sort((a,b)=> b.creado.localeCompare(a.creado)).slice(0,8);
   const pedidosRecientesRows = pedidosRecientes.map(p=>{
-    const ap = p.aplicado || {inv:0,mo:0,gan:0};
+    const ap = p.aplicado || {inv:0,moTrad:0,moDom:0,gan:0};
     return `<tr>
       <td>${p.creado}</td>
       <td>${p.cliente}<div class="caption">${p.items.map(nombreProductoPedidoItem).join(', ')}</div></td>
       <td class="num">${fmt(pedidoTotal(p))}</td>
       <td class="num">${fmt(ap.inv)}</td>
-      <td class="num">${fmt(ap.mo)}</td>
+      <td class="num">${fmt(ap.moTrad)}</td>
+      <td class="num">${fmt(ap.moDom)}</td>
       <td class="num" style="font-weight:700">${fmt(ap.gan)}</td>
     </tr>`;
   }).join('');
@@ -87,16 +91,20 @@ function renderResumen(){
     </div>
     <div class="apart-grid">
       <div class="apart apart-inv"><div class="label">Inversión — ${rangoLabel}</div><div class="amount">${fmt(t.inversion)}</div></div>
-      <div class="apart apart-labor"><div class="label">Mano de obra — ${rangoLabel}</div><div class="amount">${fmt(t.manoObra)}</div></div>
+      <div class="apart apart-labor">
+        <div class="label">Mano de obra — ${rangoLabel}</div>
+        <div class="amount">${fmt((t.manoObraTradicional||0)+(t.manoObraDomicilio||0))}</div>
+        <div class="apart-breakdown">Tradicional ${fmt(t.manoObraTradicional||0)} · Domicilios ${fmt(t.manoObraDomicilio||0)}</div>
+      </div>
       <div class="apart apart-profit"><div class="label">Ganancia — ${rangoLabel}</div><div class="amount">${fmt(t.ganancia)}</div></div>
       <div class="apart apart-cobrar"><div class="label">Falta por cobrar</div><div class="amount">${fmt(totalPorCobrarValor)}</div></div>
     </div>
     <div class="card">
-      <div class="section-head"><div><h2>Pedidos recientes</h2><div class="sub">De lo que ha entrado por cada pedido: cuánto recupera de materiales (inversión), cuánto es de mano de obra, y cuánto queda de ganancia — según lo abonado a la fecha.</div></div></div>
+      <div class="section-head"><div><h2>Pedidos recientes</h2><div class="sub">De lo que ha entrado por cada pedido: cuánto recupera de materiales (inversión), cuánto es de mano de obra (tradicional / domicilio), y cuánto queda de ganancia — según lo abonado a la fecha.</div></div></div>
       ${pedidosRecientes.length===0?`<div class="empty">Aún no hay pedidos registrados.</div>`:`
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Fecha</th><th>Cliente / productos</th><th class="num">Total</th><th class="num">→ Inversión</th><th class="num">→ Mano de obra</th><th class="num">→ Ganancia</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Cliente / productos</th><th class="num">Total</th><th class="num">→ Inversión</th><th class="num">→ M. obra (trad.)</th><th class="num">→ M. obra (domic.)</th><th class="num">→ Ganancia</th></tr></thead>
         <tbody>${pedidosRecientesRows}</tbody>
       </table>
       </div>`}
@@ -165,15 +173,15 @@ function descargarCSV(filename, headers, rows){
   URL.revokeObjectURL(url);
 }
 function exportarPedidosCSV(){
-  const headers = ['Fecha creación','Cliente','Teléfono','Fecha entrega','Estado','Productos','Total','Domicilio','Abonado','Saldo pendiente','Inversión','Mano de obra','Ganancia','Notas'];
+  const headers = ['Fecha creación','Cliente','Teléfono','Fecha entrega','Estado','Productos','Total','Domicilio','Abonado','Saldo pendiente','Inversión','Mano de obra (tradicional)','Mano de obra (domicilio)','Ganancia','Notas'];
   const rows = state.pedidos.map(p=>{
-    const ap = p.aplicado || {inv:0,mo:0,gan:0};
+    const ap = p.aplicado || {inv:0,moTrad:0,moDom:0,gan:0};
     return [
       p.creado, p.cliente, p.telefono||'', p.fechaEntrega,
       p.estado==='pendiente'?'Pendiente':p.estado==='entregado'?'Entregado':'Cancelado',
       p.items.map(nombreProductoPedidoItem).join(' | '),
       pedidoTotal(p), (p.domicilio&&p.domicilio.activo)?p.domicilio.valor:0,
-      p.abono||0, p.saldoPendiente||0, ap.inv.toFixed(0), ap.mo.toFixed(0), ap.gan.toFixed(0), p.notas||''
+      p.abono||0, p.saldoPendiente||0, ap.inv.toFixed(0), ap.moTrad.toFixed(0), ap.moDom.toFixed(0), ap.gan.toFixed(0), p.notas||''
     ];
   });
   descargarCSV(`florevah-pedidos-${today()}.csv`, headers, rows);

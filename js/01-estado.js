@@ -40,21 +40,20 @@
    debes pegar en Firestore → pestaña "Reglas".
 ------------------------------------------------------------- */
 const firebaseConfig = {
-  apiKey: "AIzaSyBnwMHL_S_b21qJGH5VV9i3G2_Ik7c_5yc",
-  authDomain: "floretario-8762c.firebaseapp.com",
-  projectId: "floretario-8762c",
-  storageBucket: "floretario-8762c.firebasestorage.app",
-  messagingSenderId: "712003677703",
-  appId: "1:712003677703:web:9ad37740c6dd19698a04a2"
+  apiKey: "PEGA_AQUI_TU_API_KEY",
+  authDomain: "PEGA_AQUI_TU_PROYECTO.firebaseapp.com",
+  projectId: "PEGA_AQUI_TU_PROYECTO",
+  storageBucket: "PEGA_AQUI_TU_PROYECTO.appspot.com",
+  messagingSenderId: "PEGA_AQUI",
+  appId: "PEGA_AQUI"
 };
-
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
 const FV = firebase.firestore.FieldValue; // atajo para increment()/etc.
 
 /* ---------------- 2. Estado local (espejo en memoria de Firestore) ---------------- */
-let state = { insumos: [], productos: [], ventas: [], pedidos: [], movimientos: [], historialPrecios: [], actividad: [], totales: { inversion:0, manoObra:0, ganancia:0 } };
+let state = { insumos: [], productos: [], ventas: [], pedidos: [], movimientos: [], historialPrecios: [], actividad: [], totales: { inversion:0, manoObraTradicional:0, manoObraDomicilio:0, ganancia:0 } };
 
 const fmt = n => (isFinite(n)?n:0).toLocaleString('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0});
 const uid = () => Math.random().toString(36).slice(2,10); // ya casi no se usa para ids (Firestore genera los suyos), pero se deja por si algo lo necesita como id temporal
@@ -196,16 +195,18 @@ function registrarCompraInsumoDB(insumoId, cantidad, precio, onListo){
     .catch(err=>{ console.error('Error registrando compra:', err); toast('No se pudo registrar la compra — revisa tu conexión'); });
 }
 
-/* Los totales del negocio (inversión / mano de obra / ganancia) viven en UN solo documento
-   compartido por todos. SIEMPRE se tocan con increment() — nunca con una sobreescritura directa
-   de todo el objeto — porque si no, la última persona en guardar borraría lo que la otra sumó
-   mientras tanto. La única excepción es "establecerTotales", para cuando de verdad quieres
-   reemplazar el valor completo (restaurar un respaldo, restablecer los datos de ejemplo). */
-function ajustarTotales({inversion=0, manoObra=0, ganancia=0}){
-  if(sembrando || (!inversion && !manoObra && !ganancia)) return;
+/* Los totales del negocio (inversión / mano de obra [tradicional y domicilio] / ganancia) viven
+   en UN solo documento compartido por todos. SIEMPRE se tocan con increment() — nunca con una
+   sobreescritura directa de todo el objeto — porque si no, la última persona en guardar borraría
+   lo que la otra sumó mientras tanto. La única excepción es "establecerTotales", para cuando de
+   verdad quieres reemplazar el valor completo (restaurar un respaldo, restablecer los datos de
+   ejemplo). */
+function ajustarTotales({inversion=0, manoObraTradicional=0, manoObraDomicilio=0, ganancia=0}){
+  if(sembrando || (!inversion && !manoObraTradicional && !manoObraDomicilio && !ganancia)) return;
   db.collection('meta').doc('totales').set({
     inversion: FV.increment(inversion),
-    manoObra: FV.increment(manoObra),
+    manoObraTradicional: FV.increment(manoObraTradicional),
+    manoObraDomicilio: FV.increment(manoObraDomicilio),
     ganancia: FV.increment(ganancia),
   }, {merge:true}).catch(err=>console.error('Error ajustando totales:', err));
 }
@@ -251,7 +252,24 @@ function iniciarListeners(){
   }, err=>console.error('Error escuchando actividad:', err));
 
   db.collection('meta').doc('totales').onSnapshot(snap=>{
-    if(snap.exists) state.totales = snap.data();
+    if(snap.exists){
+      const datos = snap.data();
+      // Migración silenciosa: si en Firestore todavía queda el campo viejo "manoObra" (de antes
+      // de dividirlo en tradicional/domicilio) y aún no se ha migrado, se pasa completo a
+      // "tradicional" (la separación exacta ya no se puede reconstruir) y se guarda una sola vez.
+      if(datos.manoObra !== undefined && datos.manoObraTradicional === undefined){
+        const migrado = {
+          inversion: datos.inversion||0,
+          manoObraTradicional: datos.manoObra||0,
+          manoObraDomicilio: 0,
+          ganancia: datos.ganancia||0,
+        };
+        establecerTotales(migrado).catch(err=>console.error('Error migrando totales:', err));
+        state.totales = migrado;
+      } else {
+        state.totales = { inversion:0, manoObraTradicional:0, manoObraDomicilio:0, ganancia:0, ...datos };
+      }
+    }
     if(loaded) render();
   }, err=>console.error('Error escuchando totales:', err));
 }
@@ -311,17 +329,29 @@ async function reemplazarTodoEnFirestore(nuevoState){
     });
     if(hayOperaciones) await batch.commit();
   }
-  await establecerTotales(nuevoState.totales || {inversion:0, manoObra:0, ganancia:0});
+  await establecerTotales(nuevoState.totales || {inversion:0, manoObraTradicional:0, manoObraDomicilio:0, ganancia:0});
 }
 
-/* ---------------- 7. Arranque ---------------- */
-async function loadState(){
-  try{
-    await auth.signInAnonymously();
-  }catch(err){
-    console.error('Error de autenticación con Firebase:', err);
-    toast('No se pudo conectar a Firebase — revisa la configuración en 01-estado.js');
-  }
+/* ---------------- 7. Arranque y sesión ----------------
+   Antes cualquiera que abriera la app entraba "anónimo" automático — eso significa que
+   cualquiera que encontrara la URL tenía las mismas llaves que ustedes dos. Ahora se pide
+   correo y contraseña de verdad (las cuentas se crean a mano en Firebase console →
+   Authentication → método "Correo/contraseña"), y solo esas cuentas pueden entrar. */
+let usuarioActual = null;
+
+function iniciarApp(){
+  auth.onAuthStateChanged(async (user) => {
+    usuarioActual = user;
+    if(user){
+      await cargarDatosIniciales();
+    } else {
+      loaded = true; // para que se muestre la pantalla de login en vez de "Cargando..."
+    }
+    render();
+  });
+}
+
+async function cargarDatosIniciales(){
   try{
     const totalesSnap = await db.collection('meta').doc('totales').get();
     if(!totalesSnap.exists){
@@ -336,7 +366,18 @@ async function loadState(){
   }
   iniciarListeners();
   loaded = true;
-  render();
+}
+
+/* "Recuérdame" = la sesión sobrevive a cerrar el navegador (persistencia LOCAL).
+   Sin marcar = la sesión se borra al cerrar la pestaña (persistencia SESSION), útil si
+   alguna vez entran desde un celular/computador que no es el suyo. */
+function iniciarSesion(email, password, recordar){
+  const persistencia = recordar ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION;
+  return auth.setPersistence(persistencia)
+    .then(()=> auth.signInWithEmailAndPassword(email, password));
+}
+function cerrarSesion(){
+  auth.signOut();
 }
 
 /* Ya no hace falta preguntar cada 20 segundos "¿hay algo nuevo?" — onSnapshot avisa al instante.
@@ -449,7 +490,7 @@ function seed(){
     prod('Caja de chocolates x4', [], 500,116.67,7600, 45000, 18618.92, false),
   ];
 
-  state.totales = { inversion:0, manoObra:0, ganancia:0 };
+  state.totales = { inversion:0, manoObraTradicional:0, manoObraDomicilio:0, ganancia:0 };
   state.ventas = [];
   state.historialPrecios = [];
   state.actividad = [];
@@ -508,7 +549,7 @@ function seed(){
         ajustarStockProducto(prod.id, -it.cantidad);
       }
     });
-    const pedido = { id: uid(), cliente, telefono, fechaEntrega, notas, estado:'pendiente', items, domicilio: domicilio||{activo:false,valor:0}, costoInversion, costoManoObraBase, abono:0, aplicado:{inv:0,mo:0,gan:0}, saldoPendiente:0, creado: today() };
+    const pedido = { id: uid(), cliente, telefono, fechaEntrega, notas, estado:'pendiente', items, domicilio: domicilio||{activo:false,valor:0}, costoInversion, costoManoObraBase, abono:0, aplicado:{inv:0,moTrad:0,moDom:0,gan:0}, saldoPendiente:0, creado: today() };
     state.pedidos.push(pedido);
     aplicarAbonoPedido(pedido, abonoInicial||0);
     logActividad('pedido','agregar', `Pedido creado: ${cliente} — ${items.map(it=>`${it.cantidad}× ${nombreProductoPedidoItem(it)}`).join(', ')}`);

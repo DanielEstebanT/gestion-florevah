@@ -4,7 +4,9 @@
 
 let balancePage = 1;
 function setBalancePage(p){ balancePage = p; render(); window.scrollTo(0,0); }
-function bolsaLabel(b){ return b==='inversion'?'Inversión':(b==='manoObra'?'Mano de obra':'Ganancia'); }
+function bolsaLabel(b){
+  return { inversion:'Inversión', manoObraTradicional:'Mano de obra (tradicional)', manoObraDomicilio:'Mano de obra (domicilios)', ganancia:'Ganancia' }[b] || b;
+}
 function renderBalance(){
   const movimientos = state.movimientos.slice().sort((a,b)=> new Date(b.fecha) - new Date(a.fecha) || b.creado.localeCompare(a.creado));
   const { items: movPage, page, totalPages } = paginar(movimientos, balancePage);
@@ -25,7 +27,7 @@ function renderBalance(){
   return `
     <div class="card">
       <h2>Balance — movimientos manuales</h2>
-      <div class="sub">Para cuando compras algo que no sale de una receta (herramientas, arriendo, transporte, etc.) o cuando entra plata de afuera a alguna de las tres bolsas — por ejemplo un préstamo o un aporte para arrancar.</div>
+      <div class="sub">Para cuando compras algo que no sale de una receta (herramientas, arriendo, transporte, etc.) o cuando entra plata de afuera a alguna de las bolsas — por ejemplo un préstamo o un aporte para arrancar.</div>
       <div class="grid3">
         <div class="field"><label>Fecha</label><input id="mv-fecha" type="date" value="${today()}"></div>
         <div class="field"><label>Tipo</label>
@@ -37,7 +39,8 @@ function renderBalance(){
         <div class="field"><label>¿De cuál bolsa?</label>
           <select id="mv-bolsa">
             <option value="inversion">Inversión</option>
-            <option value="manoObra">Mano de obra</option>
+            <option value="manoObraTradicional">Mano de obra (tradicional)</option>
+            <option value="manoObraDomicilio">Mano de obra (domicilios)</option>
             <option value="ganancia">Ganancia</option>
           </select>
         </div>

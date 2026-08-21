@@ -21,29 +21,39 @@ function costosPedidoItem(it){
   const mp = materiaPrimaTotal(p, variante), herr = p.desgasteHerramientas||0, emp = empaqueCosto(p);
   return { inversion: (mp+herr+emp)*it.cantidad, manoObra: (p.manoObra||0)*it.cantidad };
 }
-/* Costo de mano de obra del pedido = suma de mano de obra de productos + domicilio (si aplica) */
-function costoManoObraPedido(p){
-  return (p.costoManoObraBase||0) + ((p.domicilio && p.domicilio.activo) ? (p.domicilio.valor||0) : 0);
-}
-/* Reparte el abono con prioridad: 1º recupera inversión (materiales), 2º mano de obra, 3º lo que sobra es ganancia */
-function distribuirAbono(costoInversion, costoManoObra, abonoTotal){
+/* Costo de mano de obra tradicional (la de armar los productos) y de domicilio, por separado */
+function costoManoObraTradicionalPedido(p){ return p.costoManoObraBase||0; }
+function costoManoObraDomicilioPedido(p){ return (p.domicilio && p.domicilio.activo) ? (p.domicilio.valor||0) : 0; }
+function costoManoObraPedido(p){ return costoManoObraTradicionalPedido(p) + costoManoObraDomicilioPedido(p); }
+
+/* Reparte el abono con prioridad: 1º recupera inversión (materiales), 2º mano de obra
+   (tradicional + domicilio juntas, repartidas entre ellas proporcional a lo que pesa cada
+   una en ESTE pedido), 3º lo que sobra es ganancia. */
+function distribuirAbono(costoInversion, costoManoObraTrad, costoManoObraDom, abonoTotal){
   let restante = abonoTotal;
   const inv = Math.min(restante, costoInversion); restante -= inv;
-  const mo = Math.min(restante, costoManoObra); restante -= mo;
+  const costoManoObraTotal = costoManoObraTrad + costoManoObraDom;
+  const moPool = Math.min(restante, costoManoObraTotal); restante -= moPool;
+  let moTrad = 0, moDom = 0;
+  if(costoManoObraTotal > 0){
+    moTrad = +(moPool * (costoManoObraTrad / costoManoObraTotal)).toFixed(2);
+    moDom = +(moPool - moTrad).toFixed(2); // así no se pierde nada por redondeo
+  }
   const gan = Math.max(0, restante);
-  return { inv, mo, gan };
+  return { inv, moTrad, moDom, gan };
 }
 /* Aplica un nuevo total de abono al pedido, ajustando las bolsas globales solo por la diferencia (delta) */
 function aplicarAbonoPedido(p, nuevoAbonoTotal){
   const total = pedidoTotal(p);
   nuevoAbonoTotal = Math.max(0, Math.min(nuevoAbonoTotal, total));
-  const nueva = distribuirAbono(p.costoInversion||0, costoManoObraPedido(p), nuevoAbonoTotal);
-  const previa = p.aplicado || {inv:0, mo:0, gan:0};
-  const dInv = nueva.inv - previa.inv, dMo = nueva.mo - previa.mo, dGan = nueva.gan - previa.gan;
+  const nueva = distribuirAbono(p.costoInversion||0, costoManoObraTradicionalPedido(p), costoManoObraDomicilioPedido(p), nuevoAbonoTotal);
+  const previa = p.aplicado || {inv:0, moTrad:0, moDom:0, gan:0};
+  const dInv = nueva.inv - previa.inv, dTrad = nueva.moTrad - previa.moTrad, dDom = nueva.moDom - previa.moDom, dGan = nueva.gan - previa.gan;
   state.totales.inversion += dInv; // optimista en local
-  state.totales.manoObra += dMo;
+  state.totales.manoObraTradicional += dTrad;
+  state.totales.manoObraDomicilio += dDom;
   state.totales.ganancia += dGan;
-  ajustarTotales({ inversion: dInv, manoObra: dMo, ganancia: dGan }); // atómico en Firestore
+  ajustarTotales({ inversion: dInv, manoObraTradicional: dTrad, manoObraDomicilio: dDom, ganancia: dGan }); // atómico en Firestore
   p.aplicado = nueva;
   p.abono = nuevoAbonoTotal;
   p.saldoPendiente = +(total - nuevoAbonoTotal).toFixed(2);
@@ -62,7 +72,11 @@ function renderPedidos(){
     const menuOpen = rowMenuOpen === p.id;
     const acciones = [`<button onclick="editPedido('${p.id}')">Editar</button>`];
     if(p.estado==='pendiente'){
-      acciones.push(`<button onclick="closeRowMenu(); confirmarCambiarEstadoPedido('${p.id}','entregado')">Marcar entregado</button>`);
+      if(saldo>0){
+        acciones.push(`<button disabled title="Debe ${fmt(saldo)} para poder entregarse" style="opacity:.45;cursor:not-allowed">Marcar entregado (debe ${fmt(saldo)})</button>`);
+      } else {
+        acciones.push(`<button onclick="closeRowMenu(); confirmarCambiarEstadoPedido('${p.id}','entregado')">Marcar entregado</button>`);
+      }
       acciones.push(`<button onclick="closeRowMenu(); confirmarCambiarEstadoPedido('${p.id}','cancelado')">Cancelar pedido</button>`);
     }
     acciones.push(`<button class="danger" onclick="closeRowMenu(); confirmarDeletePedido('${p.id}')">Eliminar</button>`);
@@ -118,6 +132,10 @@ function toggleRowMenu(id){ rowMenuOpen = rowMenuOpen===id ? null : id; render()
 function closeRowMenu(){ rowMenuOpen = null; }
 function confirmarCambiarEstadoPedido(id, estado){
   const p = state.pedidos.find(x=>x.id===id); if(!p) return;
+  if(estado==='entregado' && (p.saldoPendiente||0) > 0){
+    toast(`Este pedido todavía debe ${fmt(p.saldoPendiente)} — no se puede marcar como entregado hasta que quede pagado por completo.`);
+    return;
+  }
   const filas = [['Cliente', p.cliente], ['Nuevo estado', estado==='entregado'?'Entregado':'Cancelado']];
   if(estado==='cancelado') filas.push(['Importante', 'El stock de producto ya fabricado se devuelve al inventario. Los insumos no, porque ya se transformaron.']);
   confirmarAntesDe(estado==='entregado' ? '¿Marcar este pedido como entregado?' : '¿Cancelar este pedido?', filas, ()=>{
@@ -302,7 +320,7 @@ function savePedido(){
       const nuevoPedido = {
         cliente, telefono, fechaEntrega, notas, estado:'pendiente',
         items: pedidoItemsBuilder, domicilio:{activo:domicilioActivo, valor:domicilioValor},
-        costoInversion, costoManoObraBase, abono:0, aplicado:{inv:0,mo:0,gan:0}, saldoPendiente:0,
+        costoInversion, costoManoObraBase, abono:0, aplicado:{inv:0,moTrad:0,moDom:0,gan:0}, saldoPendiente:0,
         creado: today()
       };
       aplicarAbonoPedido(nuevoPedido, abonoInicial); // reparte el abono inicial y ajusta totales (atómico)
@@ -340,6 +358,10 @@ function registrarAbonoPedido(id){
 }
 function cambiarEstadoPedido(id, estado){
   const p = state.pedidos.find(x=>x.id===id); if(!p) return;
+  if(estado==='entregado' && (p.saldoPendiente||0) > 0){
+    toast(`Este pedido todavía debe ${fmt(p.saldoPendiente)} — no se puede marcar como entregado hasta que quede pagado por completo.`);
+    return;
+  }
   if(estado==='cancelado' && p.estado==='pendiente'){
     // Devuelve el stock de producto ya apartado (no los insumos, esos ya se transformaron)
     p.items.forEach(it=>{
@@ -357,6 +379,7 @@ function cambiarEstadoPedido(id, estado){
     logActividad('pedido','cancelar', `Pedido cancelado: ${p.cliente}`);
     toast('Pedido cancelado — el stock de producto ya fabricado se devolvió al inventario (los insumos no, porque ya se transformaron)');
   } else {
+    p.fechaEntregado = today(); // se usa en Análisis para saber cuándo se cerró la venta de verdad
     logActividad('pedido','entregar', `Pedido entregado: ${p.cliente}`);
     toast(estado==='entregado'?'Pedido marcado como entregado':'Pedido cancelado');
   }

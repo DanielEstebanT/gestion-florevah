@@ -2,7 +2,7 @@
    ORQUESTADOR PRINCIPAL
    render(), navegacion (nav inferior + submenus), y el arranque
    de la app. Este archivo debe cargarse SIEMPRE de ultimo, porque
-   dispara loadState() que a su vez llama render() usando todo
+   dispara iniciarApp() que a su vez llama render() usando todo
    lo que los demas modulos ya definieron.
    ============================================================ */
 
@@ -16,6 +16,7 @@ let loaded = false;
 function render(){
   const app = document.getElementById('app');
   if(!loaded){ app.innerHTML = `<div class="empty">Cargando tu información…</div>`; return; }
+  if(!usuarioActual){ app.innerHTML = renderLogin(); return; }
   formDirty = false; // cada render() real vuelve a dejar la pantalla "limpia"
   app.innerHTML = `
     <div class="topbar">
@@ -23,6 +24,7 @@ function render(){
         ${brandMark()}
         <div class="brand-text"><div class="name">florevah</div><div class="tag">Costeo e inventario</div></div>
       </div>
+      <button class="btn btn-ghost btn-sm" onclick="cerrarSesion()">Salir</button>
     </div>
     <div id="tab-content"></div>
     ${renderBottomPopup()}
@@ -44,6 +46,37 @@ function render(){
   if(tab==='actividad') c.innerHTML = renderActividad();
   if(tab==='resumen') c.innerHTML = renderResumen();
   attachHandlers();
+}
+function renderLogin(){
+  return `
+    <div class="login-wrap">
+      <div class="login-card">
+        ${brandMark()}
+        <h1 class="display" style="font-size:22px;margin:14px 0 2px">florevah</h1>
+        <div class="sub" style="margin-bottom:20px">Entra con tu cuenta para ver el inventario</div>
+        <div class="field"><label>Correo</label><input id="login-email" type="email" autocomplete="username" placeholder="tú@correo.com"></div>
+        <div class="field"><label>Contraseña</label><input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+        <label class="login-remember">
+          <input type="checkbox" id="login-recordar" checked style="width:auto">
+          <span>Recuérdame en este dispositivo</span>
+        </label>
+        <button class="btn btn-primary" style="width:100%;margin-top:14px" onclick="intentarLogin()">Entrar</button>
+        <div id="login-error" class="login-error"></div>
+      </div>
+    </div>
+  `;
+}
+function intentarLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const recordar = document.getElementById('login-recordar').checked;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if(!email || !pass){ errEl.textContent = 'Completa correo y contraseña.'; return; }
+  iniciarSesion(email, pass, recordar).catch(err=>{
+    console.error('Error de login:', err);
+    errEl.textContent = 'Correo o contraseña incorrectos.';
+  });
 }
 
 const SUBTAB_META = {
@@ -111,4 +144,4 @@ document.addEventListener('change', (e)=>{
   if(e.target.closest('#tab-content') || e.target.closest('.modal-box')) formDirty = true;
 });
 
-loadState();
+iniciarApp();
