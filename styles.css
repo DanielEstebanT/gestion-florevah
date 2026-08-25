@@ -302,3 +302,123 @@
   .recipe-block{border:1px dashed var(--line);border-radius:10px;padding:12px;margin:10px 0;background:#FCF8FD;}
   .recipe-block > label{margin-bottom:8px;}
   .preview-box{background:#F5EDF8;border-radius:10px;padding:14px;margin:12px 0;}
+
+  /* Variantes de insumos — bloque visual integrado con el resto de formularios */
+.variantes-editor{
+  grid-column:1/-1;
+  background:#FCF8FD;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:14px;
+  margin-top:2px;
+}
+
+.variantes-toggle{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-height:24px;
+  cursor:pointer;
+}
+
+.variantes-toggle input[type=checkbox]{
+  width:17px;
+  height:17px;
+  margin:0;
+  accent-color:var(--lilac);
+  flex:0 0 auto;
+  cursor:pointer;
+}
+
+.variantes-toggle label{
+  margin:0;
+  color:var(--ink);
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+.variantes-toggle label span{
+  color:var(--ink-soft);
+  font-weight:500;
+}
+
+.variantes-wrap{
+  margin-top:14px;
+  border-top:1px solid var(--line);
+  padding-top:14px;
+}
+
+.variantes-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.variantes-header strong{
+  font-size:13px;
+  color:var(--lilac-deep);
+}
+
+.variantes-list{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.variante-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;
+  align-items:end;
+  gap:10px;
+  padding:10px;
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:10px;
+}
+
+.variante-field label{
+  font-size:11.5px;
+  margin-bottom:4px;
+}
+
+.variante-field input{
+  background:var(--paper);
+}
+
+.variante-delete{
+  white-space:nowrap;
+  margin-bottom:0;
+}
+
+.variantes-help{
+  margin-top:10px;
+}
+
+@media(max-width:640px){
+  .variantes-header{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+
+  .variante-row{
+    grid-template-columns:1fr 1fr;
+  }
+
+  .variante-delete{
+    grid-column:1/-1;
+    justify-self:start;
+  }
+}
+
+@media(max-width:420px){
+  .variante-row{
+    grid-template-columns:1fr;
+  }
+
+  .variante-delete{
+    grid-column:auto;
+  }
+}
