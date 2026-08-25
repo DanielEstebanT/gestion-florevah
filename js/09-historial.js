@@ -44,11 +44,11 @@ function variacionPct(historial){
 /* Costo de una receta sustituyendo el precio de UN insumo puntual (para simular "¿cuánto costaba antes?") */
 function costoRecetaConPrecioCustom(receta, insumoId, precioCustom){
   return (receta||[]).reduce((s,r)=>{
-    const ins = state.insumos.find(i=>i.id===r.insumoId);
-    if(!ins) return s;
-    const precio = (r.insumoId===insumoId && precioCustom!=null) ? precioCustom : ins.precioUnidad;
-    return s + precio * r.cantidad;
-  }, 0);
+    const ins=state.insumos.find(i=>i.id===r.insumoId); if(!ins) return s;
+    const v=varianteInsumo(ins,r.varianteId);
+    const precio=(r.insumoId===insumoId&&precioCustom!=null)?precioCustom:(v?v.precioUnidad:ins.precioUnidad);
+    return s+precio*r.cantidad;
+  },0);
 }
 function costoProductoConInsumoPrecio(p, variante, insumoId, precioCustom){
   const mp = p.receta.length ? costoRecetaConPrecioCustom(p.receta, insumoId, precioCustom) : (p.materiaPrimaManual||0);

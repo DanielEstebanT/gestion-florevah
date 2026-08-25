@@ -1,241 +1,53 @@
 /* ============================================================
-   PESTANA: INSUMOS
+   PESTANA: INSUMOS — variantes opcionales
    ============================================================ */
-
-let insumoSearch = '', insumoOrigenFilter = 'todos';
-
+let insumoSearch='', insumoOrigenFilter='todos';
+function insumoTieneVariantes(i){ return Array.isArray(i.variantes)&&i.variantes.some(v=>v.activa!==false); }
+function stockTotalVariantes(i){ return (i.variantes||[]).filter(v=>v.activa!==false).reduce((s,v)=>s+(v.stockActual||0),0); }
+function costoPromedioVariantes(i){ const vs=(i.variantes||[]).filter(v=>v.activa!==false); const q=vs.reduce((s,v)=>s+(v.cantidadComprada||0),0); const p=vs.reduce((s,v)=>s+(v.precioTotalComprado||0),0); return q?p/q:0; }
 function renderInsumos(){
-  const filtered = state.insumos.filter(i=>{
-    const matchSearch = i.nombre.toLowerCase().includes(insumoSearch.toLowerCase());
-    const matchOrigen = insumoOrigenFilter==='todos' || i.origen===insumoOrigenFilter;
-    return matchSearch && matchOrigen;
-  });
-  const cards = filtered.map(i=>{
-    const st = stockStatus(i);
-    const pillClass = st==='ok'?'status-ok':st==='low'?'status-low':'status-out';
-    const pillText = st==='ok'?'Bien':st==='low'?'Bajo':'Agotado';
-    const menuOpen = rowMenuOpen === 'ins-'+i.id;
-    return `
-    <div class="insumo-card">
-      <div class="pedido-card-head">
-        <div>
-          <div class="pedido-cliente">${i.nombre}</div>
-          <div style="margin-top:3px">
-            <span class="origen-pill origen-${i.origen}">${i.origen==='local'?'Mercado local':'Mercado extranjero'}</span>
-            ${i.distribuidor?`<span class="caption"> · ${i.distribuidor}</span>`:''}
-          </div>
-        </div>
-        <div class="row-menu">
-          <button class="btn btn-ghost btn-sm row-menu-btn" onclick="toggleRowMenu('ins-${i.id}')" aria-label="Más acciones">⋮</button>
-          ${menuOpen?`<div class="row-menu-dropdown">
-            <button onclick="closeRowMenu(); editInsumo('${i.id}')">Editar</button>
-            <button onclick="closeRowMenu(); openCompra('${i.id}')">+ Compra</button>
-            <button class="danger" onclick="closeRowMenu(); deleteInsumo('${i.id}')">Eliminar</button>
-          </div>`:''}
-        </div>
-      </div>
-      <div class="divider" style="margin:10px 0"></div>
-      <div class="insumo-money-grid">
-        <div><div class="pedido-money-label">Stock</div><div class="insumo-money-val">${i.stockActual} ${i.unidad}</div></div>
-        <div><div class="pedido-money-label">Total comprado</div><div class="insumo-money-val">${fmt(i.precioTotalComprado)}</div></div>
-        <div><div class="pedido-money-label">Costo unidad</div><div class="insumo-money-val">${fmt(i.precioUnidad)}</div></div>
-      </div>
-      <div class="pedido-card-row" style="margin-top:10px">
-        ${flowerGauge(st)} <span class="status-pill ${pillClass}">${pillText}</span>
-      </div>
-      <div class="insumo-controls">
-        <div class="field" style="margin-bottom:0">
-          <label>Umbral de alerta</label>
-          <input type="number" min="0" step="1" value="${i.stockMinimo}" onchange="updateUmbral('${i.id}', this.value)">
-        </div>
-        <div class="field" style="margin-bottom:0">
-          <label>Prioridad de compra</label>
-          <select onchange="updatePrioridad('${i.id}', this.value)">
-            <option value="bajo" ${i.prioridad==='bajo'?'selected':''}>Bajo</option>
-            <option value="medio" ${(!i.prioridad||i.prioridad==='medio')?'selected':''}>Medio</option>
-            <option value="alto" ${i.prioridad==='alto'?'selected':''}>Alto</option>
-          </select>
-        </div>
-      </div>
-    </div>`;
+  const filtered=state.insumos.filter(i=>(i.nombre||'').toLowerCase().includes(insumoSearch.toLowerCase())&&(insumoOrigenFilter==='todos'||i.origen===insumoOrigenFilter));
+  const cards=filtered.map(i=>{
+    const st=stockStatus(i), pillClass=st==='ok'?'status-ok':st==='low'?'status-low':'status-out', pillText=st==='ok'?'Bien':st==='low'?'Bajo':'Agotado';
+    const menuOpen=rowMenuOpen==='ins-'+i.id;
+    const variants=insumoTieneVariantes(i)?(i.variantes||[]).filter(v=>v.activa!==false).map(v=>`<div class="cost-row"><span>${v.nombre}</span><span>${v.stockActual||0} ${i.unidad} · ${fmt(v.precioUnidad||0)}/${i.unidad.replace(/s$/,'')}</span></div>`).join(''):'';
+    const total=insumoTieneVariantes(i)?stockTotalVariantes(i):i.stockActual;
+    const costo=insumoTieneVariantes(i)?costoPromedioVariantes(i):i.precioUnidad;
+    return `<div class="insumo-card"><div class="pedido-card-head"><div><div class="pedido-cliente">${i.nombre}</div><div style="margin-top:3px"><span class="origen-pill origen-${i.origen}">${i.origen==='local'?'Mercado local':'Mercado extranjero'}</span>${i.distribuidor?`<span class="caption"> · ${i.distribuidor}</span>`:''}</div></div><div class="row-menu"><button class="btn btn-ghost btn-sm row-menu-btn" onclick="toggleRowMenu('ins-${i.id}')">⋮</button>${menuOpen?`<div class="row-menu-dropdown"><button onclick="closeRowMenu(); editInsumo('${i.id}')">Editar</button><button onclick="closeRowMenu(); openCompra('${i.id}')">+ Compra</button><button class="danger" onclick="closeRowMenu(); deleteInsumo('${i.id}')">Eliminar</button></div>`:''}</div></div><div class="divider" style="margin:10px 0"></div><div class="insumo-money-grid"><div><div class="pedido-money-label">Stock total</div><div class="insumo-money-val">${total} ${i.unidad}</div></div><div><div class="pedido-money-label">Total comprado</div><div class="insumo-money-val">${fmt(i.precioTotalComprado)}</div></div><div><div class="pedido-money-label">Costo unidad</div><div class="insumo-money-val">${fmt(costo)}</div></div></div>${variants?`<div class="divider" style="margin:10px 0"></div><div class="caption" style="font-weight:600;margin-bottom:6px">Variantes</div>${variants}`:''}<div class="pedido-card-row" style="margin-top:10px">${flowerGauge(st)} <span class="status-pill ${pillClass}">${pillText}</span></div><div class="insumo-controls"><div class="field" style="margin-bottom:0"><label>Umbral de alerta</label><input type="number" min="0" step="1" value="${i.stockMinimo||0}" onchange="updateUmbral('${i.id}',this.value)"></div><div class="field" style="margin-bottom:0"><label>Prioridad de compra</label><select onchange="updatePrioridad('${i.id}',this.value)"><option value="bajo" ${i.prioridad==='bajo'?'selected':''}>Bajo</option><option value="medio" ${(!i.prioridad||i.prioridad==='medio')?'selected':''}>Medio</option><option value="alto" ${i.prioridad==='alto'?'selected':''}>Alto</option></select></div></div></div>`;
   }).join('');
-
-  const lowCount = state.insumos.filter(i=>stockStatus(i)!=='ok').length;
-
-  return `
-    <div class="card">
-      <div class="section-head">
-        <div><h2>Insumos</h2><div class="sub">Lo que compras para producir. ${lowCount>0?`<b style="color:var(--red)">${lowCount} necesitan reposición.</b>`:'Todo en buen nivel.'}</div></div>
-        <button class="btn btn-primary" onclick="toggleAddInsumo()">+ Nuevo insumo</button>
-      </div>
-      <div id="add-insumo-form"></div>
-      <div class="divider"></div>
-      <div class="search-row">
-        <input type="search" placeholder="Buscar insumo…" value="${insumoSearch}" oninput="setInsumoSearch(this.value)">
-        <button class="filter-chip ${insumoOrigenFilter==='todos'?'active':''}" onclick="setInsumoFiltro('todos')">Todos</button>
-        <button class="filter-chip ${insumoOrigenFilter==='local'?'active':''}" onclick="setInsumoFiltro('local')">Mercado local</button>
-        <button class="filter-chip ${insumoOrigenFilter==='extranjero'?'active':''}" onclick="setInsumoFiltro('extranjero')">Mercado extranjero</button>
-      </div>
-    </div>
-    ${filtered.length===0?`<div class="card"><div class="empty">No hay insumos que coincidan.</div></div>`:`<div class="pedido-list">${cards}</div>`}
-  `;
+  const lowCount=state.insumos.filter(i=>stockStatus(i)!=='ok').length;
+  return `<div class="card"><div class="section-head"><div><h2>Insumos</h2><div class="sub">Lo que compras para producir. ${lowCount>0?`<b style="color:var(--red)">${lowCount} necesitan reposición.</b>`:'Todo en buen nivel.'}</div></div><button class="btn btn-primary" onclick="toggleAddInsumo()">+ Nuevo insumo</button></div><div id="add-insumo-form"></div><div class="divider"></div><div class="search-row"><input type="search" placeholder="Buscar insumo…" value="${insumoSearch}" oninput="setInsumoSearch(this.value)"><button class="filter-chip ${insumoOrigenFilter==='todos'?'active':''}" onclick="setInsumoFiltro('todos')">Todos</button><button class="filter-chip ${insumoOrigenFilter==='local'?'active':''}" onclick="setInsumoFiltro('local')">Mercado local</button><button class="filter-chip ${insumoOrigenFilter==='extranjero'?'active':''}" onclick="setInsumoFiltro('extranjero')">Mercado extranjero</button></div></div>${filtered.length===0?`<div class="card"><div class="empty">No hay insumos que coincidan.</div></div>`:`<div class="pedido-list">${cards}</div>`}`;
 }
-function setInsumoSearch(v){
-  insumoSearch=v; render();
-  const el = document.querySelector('.search-row input[type=search]');
-  if(el){ el.focus(); const len=el.value.length; el.setSelectionRange(len,len); }
-}
-function setInsumoFiltro(v){ insumoOrigenFilter=v; render(); }
-function flowerGauge(status){
-  const colors = status==='ok' ? ['#9B6FB5','#9B6FB5','#9B6FB5','#9B6FB5','#9B6FB5']
-    : status==='low' ? ['#E7B673','#E7B673','#E7B673','#E9DAEE','#E9DAEE']
-    : ['#C4645F','#E9DAEE','#E9DAEE','#E9DAEE','#E9DAEE'];
-  return `<span class="flower">${colors.map(c=>`<span class="petal" style="background:${c}"></span>`).join('')}</span>`;
-}
-function toggleAddInsumo(){
-  const el = document.getElementById('add-insumo-form');
-  if(el.innerHTML && !el.dataset.editId){ el.innerHTML=''; return; }
-  openInsumoForm();
-}
-function openInsumoForm(existing){
-  const el = document.getElementById('add-insumo-form');
-  el.dataset.editId = existing ? existing.id : '';
-  const i = existing || { nombre:'', unidad:'', distribuidor:'', origen:'local', prioridad:'medio', stockMinimo:5 };
-  el.innerHTML = `
-    <div class="divider"></div>
-    <div class="grid3" style="margin-top:6px">
-      <div class="field"><label>Nombre</label><input id="ni-nombre" type="text" placeholder="Ej. Cinta dorada" value="${i.nombre}"></div>
-      <div class="field"><label>Unidad</label><input id="ni-unidad" type="text" placeholder="metros, unidades, gramos..." value="${i.unidad}"></div>
-      <div class="field"><label>Distribuidor (opcional)</label><input id="ni-dist" type="text" placeholder="Shein, Temu..." value="${i.distribuidor}"></div>
-      ${existing? '' : `
-      <div class="field"><label>Cantidad comprada</label><input id="ni-cant" type="number" min="0" step="any"></div>
-      <div class="field"><label>Precio total pagado</label><input id="ni-precio" type="number" min="0" step="any"></div>
-      `}
-      <div class="field"><label>Umbral mínimo de alerta</label><input id="ni-umbral" type="number" min="0" step="1" value="${i.stockMinimo}"></div>
-    </div>
-    <div class="grid2">
-      <div class="field"><label>¿Dónde lo compras?</label>
-        <select id="ni-origen">
-          <option value="local" ${i.origen==='local'?'selected':''}>Mercado local</option>
-          <option value="extranjero" ${i.origen==='extranjero'?'selected':''}>Mercado extranjero</option>
-        </select>
-      </div>
-      <div class="field"><label>Prioridad de compra</label>
-        <select id="ni-prioridad">
-          <option value="bajo" ${i.prioridad==='bajo'?'selected':''}>Bajo</option>
-          <option value="medio" ${i.prioridad==='medio'?'selected':''}>Medio</option>
-          <option value="alto" ${i.prioridad==='alto'?'selected':''}>Alto</option>
-        </select>
-      </div>
-    </div>
-    ${existing? `<div class="field" style="max-width:220px"><label>Corregir stock actual</label><input id="ni-stock-actual" type="number" step="any" value="${existing.stockActual}"></div>
-    <div class="helptext">Esto solo corrige el stock disponible — no cambia el costo por unidad ni el histórico de compras. Para eso usa "+ Compra".</div>` :
-    `<div class="helptext">El costo por unidad se calcula solo: precio total ÷ cantidad.</div>`}
-    <button class="btn btn-primary" style="margin-top:10px" onclick="saveInsumo()">${existing?'Guardar cambios':'Guardar insumo'}</button>
-    ${existing? `<button class="btn btn-ghost" style="margin-top:10px" onclick="closeInsumoForm()">Cancelar</button>` : ''}
-  `;
-}
-function closeInsumoForm(){ const el=document.getElementById('add-insumo-form'); el.innerHTML=''; el.dataset.editId=''; }
+function setInsumoSearch(v){insumoSearch=v;render();const el=document.querySelector('.search-row input[type=search]');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}}
+function setInsumoFiltro(v){insumoOrigenFilter=v;render();}
+function flowerGauge(status){const colors=status==='ok'?['#9B6FB5','#9B6FB5','#9B6FB5','#9B6FB5','#9B6FB5']:status==='low'?['#E7B673','#E7B673','#E7B673','#E9DAEE','#E9DAEE']:['#C4645F','#E9DAEE','#E9DAEE','#E9DAEE','#E9DAEE'];return `<span class="flower">${colors.map(c=>`<span class="petal" style="background:${c}"></span>`).join('')}</span>`;}
+function toggleAddInsumo(){const el=document.getElementById('add-insumo-form');if(el.innerHTML&&!el.dataset.editId){el.innerHTML='';return;}openInsumoForm();}
+function variantesEditorHTML(i){const vs=(i.variantes||[]).filter(v=>v.activa!==false);return `<div class="field" style="grid-column:1/-1"><div class="toggle-row"><input type="checkbox" id="ni-tiene-variantes" ${vs.length?'checked':''} style="width:auto" onchange="toggleVariantesEditor()"><label style="margin:0">Este insumo tiene variantes (por ejemplo colores)</label></div><div id="ni-variantes-wrap" style="${vs.length?'':'display:none'}"><div id="ni-variantes-list">${vs.map(v=>`<div class="grid3" style="align-items:end;margin-bottom:8px" data-variante-row="${v.id}"><div class="field" style="margin:0"><label>Nombre</label><input class="ni-var-nombre" value="${v.nombre}"></div><div class="field" style="margin:0"><label>Stock actual</label><input class="ni-var-stock" type="number" step="any" value="${v.stockActual||0}"></div><button class="btn btn-danger btn-sm" onclick="quitarVarianteEditor('${v.id}')">Eliminar</button></div>`).join('')}</div><button type="button" class="btn btn-ghost btn-sm" onclick="agregarVarianteEditor()">+ Agregar variante</button><div class="helptext">Las compras pueden repartir automáticamente una cantidad total entre estas variantes.</div></div></div>`;}
+function openInsumoForm(existing){const el=document.getElementById('add-insumo-form');el.dataset.editId=existing?existing.id:'';const i=existing||{nombre:'',unidad:'',distribuidor:'',origen:'local',prioridad:'medio',stockMinimo:5,variantes:[]};el.innerHTML=`<div class="divider"></div><div class="grid3" style="margin-top:6px"><div class="field"><label>Nombre</label><input id="ni-nombre" type="text" placeholder="Ej. Pompones" value="${i.nombre}"></div><div class="field"><label>Unidad</label><input id="ni-unidad" type="text" placeholder="metros, unidades, gramos..." value="${i.unidad}"></div><div class="field"><label>Distribuidor (opcional)</label><input id="ni-dist" type="text" value="${i.distribuidor||''}"></div>${existing?'':`<div class="field"><label>Cantidad comprada</label><input id="ni-cant" type="number" min="0" step="any"></div><div class="field"><label>Precio total pagado</label><input id="ni-precio" type="number" min="0" step="any"></div>`}<div class="field"><label>Umbral mínimo de alerta</label><input id="ni-umbral" type="number" min="0" step="1" value="${i.stockMinimo||0}"></div>${variantesEditorHTML(i)}</div><div class="grid2"><div class="field"><label>¿Dónde lo compras?</label><select id="ni-origen"><option value="local" ${i.origen==='local'?'selected':''}>Mercado local</option><option value="extranjero" ${i.origen==='extranjero'?'selected':''}>Mercado extranjero</option></select></div><div class="field"><label>Prioridad de compra</label><select id="ni-prioridad"><option value="bajo" ${i.prioridad==='bajo'?'selected':''}>Bajo</option><option value="medio" ${(!i.prioridad||i.prioridad==='medio')?'selected':''}>Medio</option><option value="alto" ${i.prioridad==='alto'?'selected':''}>Alto</option></select></div></div>${existing?`<div class="field" style="max-width:220px"><label>Corregir stock total (solo sin variantes)</label><input id="ni-stock-actual" type="number" step="any" value="${existing.stockActual||0}" ${insumoTieneVariantes(existing)?'disabled':''}></div><div class="helptext">Para insumos con variantes, corrige el stock desde cada variante o registra una compra.</div>`:`<div class="helptext">El costo por unidad se calcula solo: precio total ÷ cantidad.</div>`}<button class="btn btn-primary" style="margin-top:10px" onclick="saveInsumo()">${existing?'Guardar cambios':'Guardar insumo'}</button>${existing?`<button class="btn btn-ghost" style="margin-top:10px" onclick="closeInsumoForm()">Cancelar</button>`:''}`;}
+function toggleVariantesEditor(){const c=document.getElementById('ni-tiene-variantes'),w=document.getElementById('ni-variantes-wrap');if(w)w.style.display=c&&c.checked?'':'none';}
+function agregarVarianteEditor(){const list=document.getElementById('ni-variantes-list');if(!list)return;const id=uid();list.insertAdjacentHTML('beforeend',`<div class="grid3" style="align-items:end;margin-bottom:8px" data-variante-row="${id}"><div class="field" style="margin:0"><label>Nombre</label><input class="ni-var-nombre" placeholder="Ej. Rojo"></div><div class="field" style="margin:0"><label>Stock actual</label><input class="ni-var-stock" type="number" step="any" value="0"></div><button class="btn btn-danger btn-sm" onclick="quitarVarianteEditor('${id}')">Eliminar</button></div>`);}
+function quitarVarianteEditor(id){const row=document.querySelector(`[data-variante-row="${id}"]`);if(row)row.remove();}
+function leerVariantesFormulario(existing){const checked=document.getElementById('ni-tiene-variantes')?.checked;if(!checked)return [];const old=new Map((existing?.variantes||[]).map(v=>[v.id,v]));return [...document.querySelectorAll('#ni-variantes-list [data-variante-row]')].map(row=>{const id=row.dataset.varianteRow,prev=old.get(id)||{};return {...prev,id,nombre:row.querySelector('.ni-var-nombre').value.trim(),stockActual:parseFloat(row.querySelector('.ni-var-stock').value)||0,stockMinimo:existing?.stockMinimo||0,activa:true,cantidadComprada:prev.cantidadComprada||0,precioTotalComprado:prev.precioTotalComprado||0,precioUnidad:prev.precioUnidad||0};}).filter(v=>v.nombre);}
+function closeInsumoForm(){const el=document.getElementById('add-insumo-form');el.innerHTML='';el.dataset.editId='';}
 function saveInsumo(){
-  const nombre = document.getElementById('ni-nombre').value.trim();
-  const unidad = document.getElementById('ni-unidad').value.trim() || 'unidades';
-  const dist = document.getElementById('ni-dist').value.trim();
-  const umbral = parseFloat(document.getElementById('ni-umbral').value)||0;
-  const origen = document.getElementById('ni-origen').value;
-  const prioridad = document.getElementById('ni-prioridad').value;
-  if(!nombre){ toast('Ponle un nombre al insumo'); return; }
-  const editId = document.getElementById('add-insumo-form').dataset.editId;
+  const nombre=document.getElementById('ni-nombre').value.trim(), unidad=document.getElementById('ni-unidad').value.trim()||'unidades', dist=document.getElementById('ni-dist').value.trim(), umbral=parseFloat(document.getElementById('ni-umbral').value)||0, origen=document.getElementById('ni-origen').value, prioridad=document.getElementById('ni-prioridad').value, editId=document.getElementById('add-insumo-form').dataset.editId;
+  if(!nombre){toast('Ponle un nombre al insumo');return;}
+  const old=editId?state.insumos.find(x=>x.id===editId):null, variantes=leerVariantesFormulario(old), tiene=variantes.length>0;
   if(editId){
-    const i = state.insumos.find(x=>x.id===editId);
-    if(!i) return;
-    const stockActualInput = document.getElementById('ni-stock-actual');
-    const nuevoStock = stockActualInput ? (parseFloat(stockActualInput.value)||0) : i.stockActual;
-    confirmarAntesDe('Vas a guardar estos cambios en el insumo:', [
-      ['Nombre', nombre],
-      ['Unidad', unidad],
-      ['Stock actual', `${nuevoStock} ${unidad}`],
-      ['Umbral de alerta', `${umbral} ${unidad}`],
-      ['Origen', origen==='local'?'Mercado local':'Mercado extranjero'],
-    ], ()=>{
-      i.nombre=nombre; i.unidad=unidad; i.distribuidor=dist; i.origen=origen; i.prioridad=prioridad; i.stockMinimo=umbral;
-      i.stockActual = nuevoStock;
-      logActividad('insumo','editar', `Insumo editado: ${nombre}`);
-      guardarInsumo(i); toast('Insumo actualizado'); closeInsumoForm(); render();
-    });
-  } else {
-    const cant = parseFloat(document.getElementById('ni-cant').value)||0;
-    const precio = parseFloat(document.getElementById('ni-precio').value)||0;
-    const precioUnidad = cant? +(precio/cant).toFixed(2):0;
-    confirmarAntesDe('Vas a agregar este insumo nuevo:', [
-      ['Nombre', nombre],
-      ['Unidad', unidad],
-      ['Cantidad comprada', `${cant} ${unidad}`],
-      ['Precio total pagado', fmt(precio)],
-      ['Costo por unidad', fmt(precioUnidad)],
-      ['Umbral de alerta', `${umbral} ${unidad}`],
-      ['Origen', origen==='local'?'Mercado local':'Mercado extranjero'],
-    ], ()=>{
-      const nuevo = { nombre, unidad, origen, prioridad, stockActual: cant, cantidadComprada: cant, precioTotalComprado: precio, precioUnidad, distribuidor: dist, stockMinimo: umbral };
-      guardarInsumo(nuevo); // asigna nuevo.id al vuelo (id real de Firestore)
-      state.insumos.push(nuevo); // optimista: se ve al instante, onSnapshot lo confirma después
-      logPrecio('insumo', nuevo.id, nombre, null, precioUnidad, 'Precio inicial');
-      logActividad('insumo','agregar', `Insumo agregado: ${nombre}`);
-      toast('Insumo agregado'); render();
-    });
+    const nuevoStock=document.getElementById('ni-stock-actual')&&!tiene?(parseFloat(document.getElementById('ni-stock-actual').value)||0):stockTotalVariantes({...old,variantes});
+    confirmarAntesDe('Vas a guardar estos cambios en el insumo:',[['Nombre',nombre],['Unidad',unidad],['Stock',`${nuevoStock} ${unidad}`],['Variantes',tiene?variantes.map(v=>v.nombre).join(', '):'Ninguna']],()=>{old.nombre=nombre;old.unidad=unidad;old.distribuidor=dist;old.origen=origen;old.prioridad=prioridad;old.stockMinimo=umbral;old.variantes=tiene?variantes:[];if(tiene)old.stockActual=stockTotalVariantes(old);else old.stockActual=nuevoStock;guardarInsumo(old);logActividad('insumo','editar',`Insumo editado: ${nombre}`);toast('Insumo actualizado');closeInsumoForm();render();});
+  }else{
+    const cant=parseFloat(document.getElementById('ni-cant').value)||0,precio=parseFloat(document.getElementById('ni-precio').value)||0;
+    if(tiene && cant>0 && Math.abs(stockTotalVariantes({...old,variantes})-cant)>0.0001){toast('Al crear un insumo con variantes, la suma de las variantes debe coincidir con la cantidad comprada.');return;}
+    const precioUnidad=cant?precio/cant:0;
+    confirmarAntesDe('Vas a agregar este insumo nuevo:',[['Nombre',nombre],['Cantidad comprada',`${cant} ${unidad}`],['Precio total pagado',fmt(precio)],['Costo por unidad',fmt(precioUnidad)],['Variantes',tiene?variantes.map(v=>`${v.nombre}: ${v.stockActual}`).join(' · '):'Ninguna']],()=>{const nuevo={nombre,unidad,origen,prioridad,stockActual:tiene?stockTotalVariantes({variantes}):cant,cantidadComprada:cant,precioTotalComprado:precio,precioUnidad,distribuidor:dist,stockMinimo:umbral,variantes:tiene?variantes:[]};if(tiene){const unit=cant?precio/cant:0;nuevo.variantes=variantes.map(v=>({...v,cantidadComprada:v.stockActual,precioTotalComprado:v.stockActual*unit,precioUnidad:unit,stockMinimo:umbral}));}guardarInsumo(nuevo);state.insumos.push(nuevo);logPrecio('insumo',nuevo.id,nombre,null,precioUnidad,'Precio inicial');logActividad('insumo','agregar',`Insumo agregado: ${nombre}`);toast('Insumo agregado');closeInsumoForm();render();});
   }
 }
-function editInsumo(id){
-  const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  openInsumoForm(i);
-  document.getElementById('add-insumo-form').scrollIntoView({behavior:'smooth'});
-}
-function updateUmbral(id,val){
-  const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  i.stockMinimo = parseFloat(val)||0;
-  db.collection('insumos').doc(id).update({ stockMinimo: i.stockMinimo }).catch(err=>console.error('Error actualizando umbral:', err));
-}
-function updatePrioridad(id,val){
-  const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  i.prioridad = val;
-  db.collection('insumos').doc(id).update({ prioridad: val }).catch(err=>console.error('Error actualizando prioridad:', err));
-}
-function deleteInsumo(id){
-  const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  confirmarAntesDe('¿Eliminar este insumo?', [
-    ['Nombre', i.nombre],
-    ['Advertencia', 'No afecta recetas ya guardadas, pero dejarán de calcular su costo con este insumo.'],
-  ], ()=>{
-    state.insumos = state.insumos.filter(x=>x.id!==id);
-    eliminarInsumoDoc(id);
-    logActividad('insumo','eliminar', `Insumo eliminado: ${i.nombre}`);
-    render();
-  }, 'Sí, eliminar');
-}
-function openCompra(id){
-  const i = state.insumos.find(x=>x.id===id); if(!i) return;
-  showFormModal({
-    titulo: `Registrar compra de "${i.nombre}"`,
-    fields: [
-      { id:'fm-compra-cant', label:`¿Cuántas ${i.unidad} compraste?`, type:'number', min:0 },
-      { id:'fm-compra-precio', label:'¿Cuánto pagaste en total?', type:'number', min:0 },
-    ],
-    confirmLabel: 'Registrar compra',
-    onConfirm: (vals)=>{
-      const cant = parseFloat(vals['fm-compra-cant']);
-      const precio = parseFloat(vals['fm-compra-precio']);
-      if(!cant || cant<=0 || isNaN(precio)){ toast('Completa cantidad y precio válidos'); return; }
-      const precioUnidadAntes = i.precioUnidad;
-      const precioEstaCompra = +(precio/cant).toFixed(2);
-      // Optimista en local para que se vea al instante — el valor EXACTO lo calcula
-      // la transacción de Firestore (a prueba de que compren dos cosas a la vez).
-      i.stockActual = +(i.stockActual + cant).toFixed(4);
-      i.cantidadComprada = +(i.cantidadComprada + cant).toFixed(4);
-      i.precioTotalComprado = +(i.precioTotalComprado + precio).toFixed(2);
-      i.precioUnidad = i.cantidadComprada ? +(i.precioTotalComprado/i.cantidadComprada).toFixed(2) : 0;
-      registrarCompraInsumoDB(i.id, cant, precio);
-      logPrecio('insumo', i.id, i.nombre, precioUnidadAntes, precioEstaCompra, `Compra de ${cant} ${i.unidad} a ${fmt(precioEstaCompra)}/${i.unidad.replace(/s$/,'')}${i.distribuidor?' — '+i.distribuidor:''}`);
-      logActividad('compra','registrar', `Compra: ${cant} ${i.unidad} de ${i.nombre} por ${fmt(precio)}`);
-      toast('Compra registrada — costo unitario actualizado'); render();
-    }
-  });
-}
+function editInsumo(id){const i=state.insumos.find(x=>x.id===id);if(!i)return;openInsumoForm(i);document.getElementById('add-insumo-form').scrollIntoView({behavior:'smooth'});}
+function updateUmbral(id,val){const i=state.insumos.find(x=>x.id===id);if(!i)return;i.stockMinimo=parseFloat(val)||0;if(insumoTieneVariantes(i))(i.variantes||[]).forEach(v=>v.stockMinimo=i.stockMinimo);db.collection('insumos').doc(id).update({stockMinimo:i.stockMinimo,variantes:i.variantes||[]}).catch(console.error);}
+function updatePrioridad(id,val){const i=state.insumos.find(x=>x.id===id);if(!i)return;i.prioridad=val;db.collection('insumos').doc(id).update({prioridad:val}).catch(console.error);}
+function deleteInsumo(id){const i=state.insumos.find(x=>x.id===id);if(!i)return;confirmarAntesDe('¿Eliminar este insumo?',[['Nombre',i.nombre],['Advertencia','Esta acción no se puede deshacer.']],()=>{state.insumos=state.insumos.filter(x=>x.id!==id);eliminarInsumoDoc(id);logActividad('insumo','eliminar',`Insumo eliminado: ${i.nombre}`);render();},'Sí, eliminar');}
+function openCompra(id){const i=state.insumos.find(x=>x.id===id);if(!i)return;if(!insumoTieneVariantes(i)){showFormModal({titulo:`Registrar compra de "${i.nombre}"`,fields:[{id:'fm-compra-cant',label:`¿Cuántas ${i.unidad} compraste?`,type:'number',min:0},{id:'fm-compra-precio',label:'¿Cuánto pagaste en total?',type:'number',min:0}],confirmLabel:'Registrar compra',onConfirm:vals=>{const cant=parseFloat(vals['fm-compra-cant']),precio=parseFloat(vals['fm-compra-precio']);if(!cant||cant<=0||isNaN(precio)){toast('Completa cantidad y precio válidos');return;}const antes=i.precioUnidad;const pu=precio/cant;i.stockActual=+(i.stockActual+cant).toFixed(4);i.cantidadComprada=+(i.cantidadComprada+cant).toFixed(4);i.precioTotalComprado=+(i.precioTotalComprado+precio).toFixed(2);i.precioUnidad=+(i.precioTotalComprado/i.cantidadComprada).toFixed(6);registrarCompraInsumoDB(i.id,cant,precio);logPrecio('insumo',i.id,i.nombre,antes,pu,`Compra de ${cant} ${i.unidad}`);logActividad('compra','registrar',`Compra: ${cant} ${i.unidad} de ${i.nombre} por ${fmt(precio)}`);toast('Compra registrada — costo unitario actualizado');render();}});return;}
+  const vs=(i.variantes||[]).filter(v=>v.activa!==false);const overlay=document.createElement('div');overlay.className='modal-overlay';overlay.id='compra-var-overlay';overlay.onclick=e=>{if(e.target===overlay)overlay.remove();};overlay.innerHTML=`<div class="modal-box"><h3>Registrar compra de "${i.nombre}"</h3><div class="helptext">Reparte la compra entre variantes. Por defecto, el costo unitario se calcula automáticamente con el total.</div><div class="field"><label>Cantidad total comprada</label><input id="cv-total" type="number" min="0" step="any"></div><div class="field"><label>Precio total pagado</label><input id="cv-precio" type="number" min="0" step="any"></div><div class="toggle-row"><input type="checkbox" id="cv-costos-distintos" style="width:auto"><label style="margin:0">Cada variante tiene un costo unitario diferente</label></div><div id="cv-rows">${vs.map(v=>`<div class="grid2" style="align-items:end;margin-bottom:8px"><div class="field" style="margin:0"><label>${v.nombre} — cantidad</label><input class="cv-cant" data-id="${v.id}" type="number" min="0" step="any" value="0"></div><div class="field cv-precio-wrap" style="margin:0;display:none"><label>Costo por unidad</label><input class="cv-pu" data-id="${v.id}" type="number" min="0" step="any" value="${v.precioUnidad||0}"></div></div>`).join('')}</div><div id="cv-info" class="helptext"></div><div class="modal-actions"><button class="btn btn-ghost" onclick="document.getElementById('compra-var-overlay').remove()">Cancelar</button><button class="btn btn-primary" onclick="confirmarCompraVariantes('${i.id}')">Registrar compra</button></div></div>`;document.body.appendChild(overlay);document.getElementById('cv-total').oninput=validarCompraVariantesUI;document.getElementById('cv-precio').oninput=validarCompraVariantesUI;document.getElementById('cv-costos-distintos').onchange=e=>{document.querySelectorAll('.cv-precio-wrap').forEach(x=>x.style.display=e.target.checked?'':'none');validarCompraVariantesUI();};document.querySelectorAll('.cv-cant,.cv-pu').forEach(x=>x.oninput=validarCompraVariantesUI);}
+function validarCompraVariantesUI(){const total=parseFloat(document.getElementById('cv-total')?.value)||0;const dist=[...document.querySelectorAll('.cv-cant')].reduce((s,e)=>s+(parseFloat(e.value)||0),0);const distintos=document.getElementById('cv-costos-distintos')?.checked;const sumaCostos=[...document.querySelectorAll('.cv-cant')].reduce((s,e)=>{const pu=distintos?(parseFloat(document.querySelector(`.cv-pu[data-id="${e.dataset.id}"]`)?.value)||0):(total?((parseFloat(document.getElementById('cv-precio')?.value)||0)/total):0);return s+(parseFloat(e.value)||0)*pu;},0);const info=document.getElementById('cv-info');if(info)info.textContent=distintos?`Distribuido: ${dist} / ${total} · Costo calculado: ${fmt(sumaCostos)}`:`Distribuido: ${dist} / ${total} ${Math.abs(dist-total)<0.0001?'✓':''} · Costo unitario: ${total?fmt((parseFloat(document.getElementById('cv-precio')?.value)||0)/total):'—'}`;}
+function confirmarCompraVariantes(id){const i=state.insumos.find(x=>x.id===id),total=parseFloat(document.getElementById('cv-total').value)||0,precioTotal=parseFloat(document.getElementById('cv-precio').value)||0,distintos=document.getElementById('cv-costos-distintos')?.checked;const dist=[...document.querySelectorAll('.cv-cant')].map(e=>({varianteId:e.dataset.id,cantidad:parseFloat(e.value)||0,precioUnidad:distintos?(parseFloat(document.querySelector(`.cv-pu[data-id="${e.dataset.id}"]`)?.value)||0):null})).filter(x=>x.cantidad>0);const suma=dist.reduce((s,x)=>s+x.cantidad,0);if(!total||total<=0||isNaN(precioTotal)||precioTotal<0){toast('Completa cantidad y precio válidos');return;}if(Math.abs(suma-total)>0.0001){toast(`La distribución (${suma}) debe coincidir con la cantidad total (${total})`);return;}const precioReal=distintos?dist.reduce((s,x)=>s+x.cantidad*(x.precioUnidad||0),0):precioTotal;if(distintos&&Math.abs(precioReal-precioTotal)>0.01){toast(`Los costos individuales suman ${fmt(precioReal)} y no coinciden con el precio total ${fmt(precioTotal)}`);return;}const antes=i.precioUnidad;const puComun=precioTotal/total;i.stockActual=+(i.stockActual+total).toFixed(4);i.cantidadComprada=+(i.cantidadComprada+total).toFixed(4);i.precioTotalComprado=+(i.precioTotalComprado+precioReal).toFixed(2);i.variantes.forEach(v=>{const d=dist.find(x=>x.varianteId===v.id);if(!d)return;const pu=d.precioUnidad!=null?d.precioUnidad:puComun;const oldQ=v.cantidadComprada||0,oldP=v.precioTotalComprado||0;v.stockActual=+(v.stockActual+d.cantidad).toFixed(4);v.cantidadComprada=+(oldQ+d.cantidad).toFixed(4);v.precioTotalComprado=+(oldP+d.cantidad*pu).toFixed(6);v.precioUnidad=v.cantidadComprada?v.precioTotalComprado/v.cantidadComprada:pu;});i.precioUnidad=i.cantidadComprada?i.precioTotalComprado/i.cantidadComprada:puComun;registrarCompraInsumoVariantesDB(i.id,dist,precioReal);logPrecio('insumo',i.id,i.nombre,antes,i.precioUnidad,`Compra de ${total} ${i.unidad} distribuida entre variantes`);logActividad('compra','registrar',`Compra: ${total} ${i.unidad} de ${i.nombre} por ${fmt(precioReal)} distribuida por variantes`);document.getElementById('compra-var-overlay')?.remove();toast('Compra registrada y distribuida por variantes');render();}

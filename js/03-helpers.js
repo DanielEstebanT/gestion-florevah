@@ -5,52 +5,54 @@
    por eso viven aparte y no dentro de un solo modulo de pestana.
    ============================================================ */
 
-function costoDeReceta(receta){
-  return receta.reduce((sum,r)=>{
-    const ins = state.insumos.find(i=>i.id===r.insumoId);
-    return sum + (ins ? ins.precioUnidad*r.cantidad : 0);
-  },0);
+function varianteInsumo(ins, varianteId){
+  if(!ins || !varianteId || !Array.isArray(ins.variantes)) return null;
+  return ins.variantes.find(v=>v.id===varianteId && v.activa!==false) || null;
 }
-function materiaPrima(p){ return p.receta.length ? costoDeReceta(p.receta) : (p.materiaPrimaManual||0); }
-function materiaPrimaTotal(p, variante){ return materiaPrima(p) + (variante ? costoDeReceta(variante.receta) : 0); }
-function empaqueCosto(p){ return p.recetaEmpaque.length ? costoDeReceta(p.recetaEmpaque) : (p.empaqueManual||0); }
-function subtotal(p){ return materiaPrima(p) + (p.desgasteHerramientas||0) + empaqueCosto(p) + (p.manoObra||0); }
-function subtotalConVariante(p, variante){ return subtotal(p) + (variante ? costoDeReceta(variante.receta) : 0); }
+function costoItemReceta(r){
+  const ins = state.insumos.find(i=>i.id===r.insumoId);
+  if(!ins) return 0;
+  const v = varianteInsumo(ins, r.varianteId);
+  return (v ? (v.precioUnidad||0) : (ins.precioUnidad||0)) * r.cantidad;
+}
+function costoDeReceta(receta){ return (receta||[]).reduce((sum,r)=>sum+costoItemReceta(r),0); }
+function recetaItemNombre(r){
+  const ins=state.insumos.find(i=>i.id===r.insumoId); if(!ins) return '—';
+  const v=varianteInsumo(ins,r.varianteId); return v ? `${ins.nombre} — ${v.nombre}` : ins.nombre;
+}
+function stockDisponibleInsumo(ins,varianteId){ const v=varianteInsumo(ins,varianteId); return v ? (v.stockActual||0) : (ins?.stockActual||0); }
+function materiaPrima(p){ return (p.receta||[]).length ? costoDeReceta(p.receta) : (p.materiaPrimaManual||0); }
+function materiaPrimaTotal(p,variante){ return materiaPrima(p)+(variante?costoDeReceta(variante.receta):0); }
+function empaqueCosto(p){ return (p.recetaEmpaque||[]).length ? costoDeReceta(p.recetaEmpaque) : (p.empaqueManual||0); }
+function subtotal(p){ return materiaPrima(p)+(p.desgasteHerramientas||0)+empaqueCosto(p)+(p.manoObra||0); }
+function subtotalConVariante(p,variante){ return subtotal(p)+(variante?costoDeReceta(variante.receta):0); }
 function stockStatus(i){
-  if(i.stockActual<=0) return 'out';
-  if(i.stockActual<=i.stockMinimo) return 'low';
+  if(i && Array.isArray(i.variantes) && i.variantes.length){
+    const vs=i.variantes.filter(v=>v.activa!==false); if(!vs.length) return 'out';
+    const total=vs.reduce((s,v)=>s+(v.stockActual||0),0);
+    if(total<=0) return 'out';
+    if(vs.some(v=>(v.stockActual||0)<=0 || (v.stockActual||0)<=(v.stockMinimo??i.stockMinimo??0))) return 'low';
+    return 'ok';
+  }
+  if((i?.stockActual||0)<=0) return 'out';
+  if((i?.stockActual||0)<=(i?.stockMinimo||0)) return 'low';
   return 'ok';
 }
-function stockProducto(p, variante){ return (variante ? variante.stock : p.stock) || 0; }
-/* Fabricar = descuenta insumos según receta y suma al inventario de productos terminados.
-   Sigue siendo síncrona (edita `state` al instante, igual que siempre) — por debajo, cada
-   descuento de insumo y cada suma de stock de producto se manda a Firestore como un
-   increment() atómico, así que si los dos fabrican lo mismo al tiempo, ninguno se pierde. */
-function fabricar(productoId, varianteId, cantidad){
-  const p = state.productos.find(x=>x.id===productoId);
-  if(!p || !cantidad || cantidad<=0) return {ok:false, faltantes:[]};
-  const variante = varianteId ? p.variantes.find(v=>v.id===varianteId) : null;
-  const receta = [...p.receta, ...p.recetaEmpaque, ...(variante?variante.receta:[])];
-  const faltantes = receta.filter(r=>{
-    const ins = state.insumos.find(i=>i.id===r.insumoId);
-    return ins && ins.stockActual < r.cantidad*cantidad;
-  }).map(r=>state.insumos.find(i=>i.id===r.insumoId).nombre);
+function stockProducto(p,variante){ return (variante?variante.stock:p.stock)||0; }
+function fabricar(productoId,varianteId,cantidad){
+  const p=state.productos.find(x=>x.id===productoId); if(!p||!cantidad||cantidad<=0) return {ok:false,faltantes:[]};
+  const variante=varianteId?(p.variantes||[]).find(v=>v.id===varianteId):null;
+  const receta=[...(p.receta||[]),...(p.recetaEmpaque||[]),...(variante?variante.receta||[]:[])];
+  const faltantes=[];
+  receta.forEach(r=>{ const ins=state.insumos.find(i=>i.id===r.insumoId); if(ins&&stockDisponibleInsumo(ins,r.varianteId)<r.cantidad*cantidad) faltantes.push(recetaItemNombre(r)); });
   receta.forEach(r=>{
-    const ins = state.insumos.find(i=>i.id===r.insumoId);
-    if(ins){
-      const delta = -(r.cantidad*cantidad);
-      ins.stockActual = +(ins.stockActual + delta).toFixed(4);
-      ajustarStockInsumo(ins.id, delta);
-    }
+    const ins=state.insumos.find(i=>i.id===r.insumoId); if(!ins) return; const delta=-(r.cantidad*cantidad); const v=varianteInsumo(ins,r.varianteId);
+    if(v){ v.stockActual=+((v.stockActual||0)+delta).toFixed(4); ins.stockActual=+((ins.stockActual||0)+delta).toFixed(4); ajustarStockInsumoVariante(ins.id,v.id,delta); }
+    else { ins.stockActual=+((ins.stockActual||0)+delta).toFixed(4); ajustarStockInsumo(ins.id,delta); }
   });
-  if(variante){
-    variante.stock = +(((variante.stock||0)) + cantidad).toFixed(4);
-    ajustarStockVarianteProducto(p.id, variante.id, cantidad);
-  } else {
-    p.stock = +(((p.stock||0)) + cantidad).toFixed(4);
-    ajustarStockProducto(p.id, cantidad);
-  }
-  return {ok:true, faltantes:[...new Set(faltantes)]};
+  if(variante){ variante.stock=+((variante.stock||0)+cantidad).toFixed(4); ajustarStockVarianteProducto(p.id,variante.id,cantidad); }
+  else { p.stock=+((p.stock||0)+cantidad).toFixed(4); ajustarStockProducto(p.id,cantidad); }
+  return {ok:true,faltantes:[...new Set(faltantes)]};
 }
 function diasHasta(fechaStr){
   if(!fechaStr) return null;

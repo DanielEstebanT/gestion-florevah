@@ -152,6 +152,17 @@ function ajustarStockProducto(productoId, delta){
   db.collection('productos').doc(productoId).set({ stock: FV.increment(delta) }, {merge:true})
     .catch(err=>console.error('Error ajustando stock de producto:', err));
 }
+function ajustarStockInsumoVariante(insumoId, varianteId, delta){
+  if(!delta || sembrando) return;
+  const ref=db.collection('insumos').doc(insumoId);
+  db.runTransaction(async tx=>{
+    const snap=await tx.get(ref); if(!snap.exists) return;
+    const data=snap.data()||{};
+    const variantes=(data.variantes||[]).map(v=>v.id===varianteId?{...v,stockActual:+((v.stockActual||0)+delta).toFixed(4)}:v);
+    const stockActual=variantes.filter(v=>v.activa!==false).reduce((a,v)=>a+(v.stockActual||0),0);
+    tx.update(ref,{variantes,stockActual:+stockActual.toFixed(4)});
+  }).catch(err=>console.error('Error ajustando stock de variante de insumo:',err));
+}
 /* El stock de una VARIANTE vive dentro de un arreglo (variantes[]), y Firestore no puede
    incrementar un número que está adentro de un arreglo directamente — por eso usamos una
    transacción: lee el documento completo, modifica solo esa variante, y lo vuelve a guardar.
@@ -176,23 +187,37 @@ function ajustarStockVarianteProducto(productoId, varianteId, delta){
    promedio (que es un valor DERIVADO: precioTotalComprado/cantidadComprada). Como el resultado
    depende de leer el valor actual antes de calcular, esto necesita una transacción, no un
    increment() simple — si no, dos compras al mismo tiempo podrían calcular mal el promedio. */
-function registrarCompraInsumoDB(insumoId, cantidad, precio, onListo){
-  const ref = db.collection('insumos').doc(insumoId);
-  db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const data = snap.data() || {};
-    const nuevaCantidadComprada = +((data.cantidadComprada||0) + cantidad).toFixed(4);
-    const nuevoPrecioTotal = +((data.precioTotalComprado||0) + precio).toFixed(2);
-    const nuevoPrecioUnidad = nuevaCantidadComprada ? +(nuevoPrecioTotal/nuevaCantidadComprada).toFixed(2) : 0;
-    tx.update(ref, {
-      stockActual: FV.increment(cantidad),
-      cantidadComprada: nuevaCantidadComprada,
-      precioTotalComprado: nuevoPrecioTotal,
-      precioUnidad: nuevoPrecioUnidad,
+function registrarCompraInsumoDB(insumoId,cantidad,precio,onListo){
+  const ref=db.collection('insumos').doc(insumoId);
+  db.runTransaction(async tx=>{
+    const snap=await tx.get(ref); const data=snap.data()||{};
+    const nuevaCantidadComprada=+((data.cantidadComprada||0)+cantidad).toFixed(4);
+    const nuevoPrecioTotal=+((data.precioTotalComprado||0)+precio).toFixed(2);
+    const nuevoPrecioUnidad=nuevaCantidadComprada?+(nuevoPrecioTotal/nuevaCantidadComprada).toFixed(2):0;
+    tx.update(ref,{stockActual:FV.increment(cantidad),cantidadComprada:nuevaCantidadComprada,precioTotalComprado:nuevoPrecioTotal,precioUnidad:nuevoPrecioUnidad});
+    return {precioUnidadAntes:data.precioUnidad||0,precioUnidadNuevo:nuevoPrecioUnidad};
+  }).then(r=>{if(onListo)onListo(r);}).catch(err=>{console.error('Error registrando compra:',err);toast('No se pudo registrar la compra — revisa tu conexión');});
+}
+function registrarCompraInsumoVariantesDB(insumoId,distribucion,precioTotal,onListo){
+  const ref=db.collection('insumos').doc(insumoId);
+  db.runTransaction(async tx=>{
+    const snap=await tx.get(ref); if(!snap.exists) throw new Error('Insumo no existe');
+    const data=snap.data()||{}; const variantes=Array.isArray(data.variantes)?data.variantes:[];
+    const totalCant=distribucion.reduce((s,x)=>s+x.cantidad,0); if(!totalCant) throw new Error('Cantidad inválida');
+    const costoUnit=precioTotal/totalCant;
+    const porId=new Map(distribucion.map(x=>[x.varianteId,x]));
+    const nuevas=variantes.map(v=>{
+      const d=porId.get(v.id); if(!d) return v;
+      const cantComprada=+((v.cantidadComprada||0)+d.cantidad).toFixed(4);
+      const precioAcum=+((v.precioTotalComprado||0)+d.cantidad*costoUnit).toFixed(6);
+      return {...v,stockActual:+((v.stockActual||0)+d.cantidad).toFixed(4),cantidadComprada:cantComprada,precioTotalComprado:precioAcum,precioUnidad:cantComprada?+(precioAcum/cantComprada).toFixed(6):0};
     });
-    return { precioUnidadAntes: data.precioUnidad||0, precioUnidadNuevo: nuevoPrecioUnidad };
-  }).then(resultado => { if(onListo) onListo(resultado); })
-    .catch(err=>{ console.error('Error registrando compra:', err); toast('No se pudo registrar la compra — revisa tu conexión'); });
+    const stockActual=nuevas.filter(v=>v.activa!==false).reduce((s,v)=>s+(v.stockActual||0),0);
+    const cantidadComprada=+((data.cantidadComprada||0)+totalCant).toFixed(4);
+    const precioAcum=+((data.precioTotalComprado||0)+precioTotal).toFixed(2);
+    tx.update(ref,{variantes:nuevas,stockActual:+stockActual.toFixed(4),cantidadComprada,precioTotalComprado:precioAcum,precioUnidad:cantidadComprada?+(precioAcum/cantidadComprada).toFixed(6):0});
+    return {precioUnidad:costoUnit};
+  }).then(r=>{if(onListo)onListo(r);}).catch(err=>{console.error('Error registrando compra por variantes:',err);toast('No se pudo registrar la compra por variantes — revisa la distribución');});
 }
 
 /* Los totales del negocio (inversión / mano de obra [tradicional y domicilio] / ganancia) viven
@@ -218,37 +243,37 @@ function establecerTotales(valores){
 function iniciarListeners(){
   db.collection('insumos').onSnapshot(snap=>{
     state.insumos = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando insumos:', err));
 
   db.collection('ventas').onSnapshot(snap=>{
     state.ventas = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando ventas:', err));
 
   db.collection('productos').onSnapshot(snap=>{
     state.productos = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando productos:', err));
 
   db.collection('pedidos').onSnapshot(snap=>{
     state.pedidos = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando pedidos:', err));
 
   db.collection('movimientos').onSnapshot(snap=>{
     state.movimientos = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando movimientos:', err));
 
   db.collection('historialPrecios').onSnapshot(snap=>{
     state.historialPrecios = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando historial de precios:', err));
 
   db.collection('actividad').onSnapshot(snap=>{
     state.actividad = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando actividad:', err));
 
   db.collection('meta').doc('totales').onSnapshot(snap=>{
@@ -270,7 +295,7 @@ function iniciarListeners(){
         state.totales = { inversion:0, manoObraTradicional:0, manoObraDomicilio:0, ganancia:0, ...datos };
       }
     }
-    if(loaded) render();
+    if(loaded) renderSiSePuede();
   }, err=>console.error('Error escuchando totales:', err));
 }
 
@@ -383,6 +408,15 @@ function cerrarSesion(){
 /* Ya no hace falta preguntar cada 20 segundos "¿hay algo nuevo?" — onSnapshot avisa al instante.
    hayFormularioAbierto() se deja solo por si en el futuro se necesita evitar algún refresco
    mientras hay un formulario abierto (por ejemplo, si se agrega alguna sincronización manual). */
+/* Se usa en vez de render() directo dentro de los listeners de Firestore: si hay un formulario
+   abierto (o cualquier campo con algo escrito), NO interrumpe la pantalla — los datos igual
+   se actualizan por dentro (`state` ya quedó al día arriba), simplemente el redibujado visual
+   espera a que termines. En cuanto cierres/guardes el formulario, el próximo render() ya sale
+   con todo lo más reciente. */
+function renderSiSePuede(){
+  if(hayFormularioAbierto()) return;
+  render();
+}
 function hayFormularioAbierto(){
   if(formDirty) return true;
   const ids = ['add-insumo-form','producto-form','pedido-form'];

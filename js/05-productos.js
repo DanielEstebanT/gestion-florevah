@@ -13,11 +13,11 @@ function renderProductos(){
     const mp = materiaPrima(p), emp = empaqueCosto(p), sub = subtotal(p);
     const mpTxt = p.receta.length ? p.receta.map(r=>{
       const ins = state.insumos.find(i=>i.id===r.insumoId);
-      return ins ? `${r.cantidad} ${ins.unidad} de ${ins.nombre}` : '';
+      return ins ? `${r.cantidad} ${ins.unidad} de ${ins.nombre}${varianteInsumo(ins,r.varianteId)?' — '+varianteInsumo(ins,r.varianteId).nombre:''}` : '';
     }).join(', ') : 'materia prima manual';
     const empTxt = p.recetaEmpaque.length ? p.recetaEmpaque.map(r=>{
       const ins = state.insumos.find(i=>i.id===r.insumoId);
-      return ins ? `${r.cantidad} ${ins.unidad} de ${ins.nombre}` : '';
+      return ins ? `${r.cantidad} ${ins.unidad} de ${ins.nombre}${varianteInsumo(ins,r.varianteId)?' — '+varianteInsumo(ins,r.varianteId).nombre:''}` : '';
     }).join(', ') : 'empaque manual';
     return `
     <div class="product-card">
@@ -57,7 +57,7 @@ function renderProductos(){
       ${p.variantes.map(v=>{
         const extraTxt = v.receta.map(r=>{
           const ins = state.insumos.find(i=>i.id===r.insumoId);
-          return ins ? `${r.cantidad} ${ins.unidad} de ${ins.nombre}` : '';
+          return ins ? `${r.cantidad} ${ins.unidad} de ${ins.nombre}${varianteInsumo(ins,r.varianteId)?' — '+varianteInsumo(ins,r.varianteId).nombre:''}` : '';
         }).join(', ') || 'sin insumos extra';
         return `<div class="cost-row"><span>${v.nombre}</span><span class="muted" style="font-weight:400">${extraTxt} · materia prima total ${fmt(materiaPrimaTotal(p,v))}</span></div>
         <div style="margin:2px 0 8px"><span class="status-pill ${(v.stock||0)>0?'status-ok':'status-out'}">Stock: ${v.stock||0} u.</span> <button class="btn btn-ghost btn-sm" onclick="fabricarPrompt('${p.id}', '${v.id}')">+ Fabricar</button></div>`;
@@ -86,17 +86,26 @@ function setProductoSearch(v){
 }
 
 function insumoOptionsHTML(filter){
-  const term = (filter||'').toLowerCase();
-  return state.insumos.filter(i=>i.nombre.toLowerCase().includes(term))
-    .map(i=>`<option value="${i.id}">${i.nombre} (${fmt(i.precioUnidad)}/${i.unidad})</option>`).join('')
-    || `<option value="" disabled selected>Sin resultados</option>`;
+  const term=(filter||'').toLowerCase();
+  return state.insumos.filter(i=>(i.nombre||'').toLowerCase().includes(term)).map(i=>`<option value="${i.id}">${i.nombre} (${fmt(i.precioUnidad||0)}/${i.unidad})${insumoTieneVariantes(i)?' · variantes':''}</option>`).join('') || `<option value="" disabled selected>Sin resultados</option>`;
+}
+function insumoVariantOptionsHTML(insumoId, selectedId){
+  const ins=state.insumos.find(i=>i.id===insumoId);
+  if(!insumoTieneVariantes(ins)) return `<option value="">Sin variante</option>`;
+  return `<option value="" ${!selectedId?'selected':''}>Elige variante…</option>` + (ins.variantes||[]).filter(v=>v.activa!==false).map(v=>`<option value="${v.id}" ${v.id===selectedId?'selected':''}>${v.nombre} (${v.stockActual||0} ${ins.unidad})</option>`).join('');
+}
+function renderRecipeVariantSelect(kind, selectedId){
+  const insumoId=document.getElementById(kind+'-insumo')?.value;
+  const wrap=document.getElementById(kind+'-variante-wrap'), sel=document.getElementById(kind+'-variante');
+  if(!wrap||!sel)return;
+  const ins=state.insumos.find(i=>i.id===insumoId);
+  if(!insumoTieneVariantes(ins)){wrap.style.display='none';sel.innerHTML='<option value="">Sin variante</option>';sel.value='';return;}
+  wrap.style.display='';sel.innerHTML=insumoVariantOptionsHTML(insumoId,selectedId);if(selectedId)sel.value=selectedId;
 }
 function filterInsumoSelect(kind){
-  const term = document.getElementById(kind+'-insumo-search').value;
-  const sel = document.getElementById(kind+'-insumo');
-  const prev = sel.value;
-  sel.innerHTML = insumoOptionsHTML(term);
-  if([...sel.options].some(o=>o.value===prev)) sel.value = prev;
+  const term=document.getElementById(kind+'-insumo-search').value, sel=document.getElementById(kind+'-insumo'), prev=sel.value;
+  sel.innerHTML=insumoOptionsHTML(term); if([...sel.options].some(o=>o.value===prev))sel.value=prev;
+  renderRecipeVariantSelect(kind);
 }
 function openProductoForm(existing){
   recetaMPBuilder = existing ? JSON.parse(JSON.stringify(existing.receta)) : [];
@@ -114,7 +123,8 @@ function openProductoForm(existing){
       <div id="mp-chips">${chipsHTML('mp', recetaMPBuilder)}</div>
       <div class="field" style="margin-bottom:8px"><label>Buscar insumo</label><input type="text" id="mp-insumo-search" placeholder="Escribe para filtrar…" oninput="filterInsumoSelect('mp')"></div>
       <div class="grid3" style="align-items:end">
-        <div class="field" style="margin-bottom:0"><label>Insumo</label><select id="mp-insumo">${insumoOptionsHTML()}</select></div>
+        <div class="field" style="margin-bottom:0"><label>Insumo</label><select id="mp-insumo" onchange="renderRecipeVariantSelect('mp')">${insumoOptionsHTML()}</select></div>
+        <div class="field" id="mp-variante-wrap" style="margin-bottom:0;display:none"><label>Variante</label><select id="mp-variante"></select></div>
         <div class="field" style="margin-bottom:0"><label>Cantidad usada</label><input id="mp-cant" type="text" placeholder="Ej: 1/3 o 0.5"></div>
         <button class="btn btn-ghost" onclick="addRecetaItem('mp')">Agregar</button>
       </div>
@@ -137,7 +147,8 @@ function openProductoForm(existing){
       <div id="emp-chips">${chipsHTML('emp', recetaEmpBuilder)}</div>
       <div class="field" style="margin-bottom:8px"><label>Buscar insumo</label><input type="text" id="emp-insumo-search" placeholder="Escribe para filtrar…" oninput="filterInsumoSelect('emp')"></div>
       <div class="grid3" style="align-items:end">
-        <div class="field" style="margin-bottom:0"><label>Insumo</label><select id="emp-insumo">${insumoOptionsHTML()}</select></div>
+        <div class="field" style="margin-bottom:0"><label>Insumo</label><select id="emp-insumo" onchange="renderRecipeVariantSelect('emp')">${insumoOptionsHTML()}</select></div>
+        <div class="field" id="emp-variante-wrap" style="margin-bottom:0;display:none"><label>Variante</label><select id="emp-variante"></select></div>
         <div class="field" style="margin-bottom:0"><label>Cantidad usada</label><input id="emp-cant" type="text" placeholder="Ej: 1/3 o 0.5"></div>
         <button class="btn btn-ghost" onclick="addRecetaItem('emp')">Agregar</button>
       </div>
@@ -170,6 +181,8 @@ function openProductoForm(existing){
     document.getElementById('mayor-tiers').style.display = e.target.checked ? '' : 'none';
   };
   renderVariantesSection();
+  renderRecipeVariantSelect('mp');
+  renderRecipeVariantSelect('emp');
   updatePreview();
 }
 function renderVariantesSection(){
@@ -191,12 +204,14 @@ function renderVariantesSection(){
       <div id="${kind}-chips">${chipsHTML(kind, v.receta)}</div>
       <div class="field" style="margin-bottom:8px"><label>Buscar insumo</label><input type="text" id="${kind}-insumo-search" placeholder="Escribe para filtrar…" oninput="filterInsumoSelect('${kind}')"></div>
       <div class="grid3" style="align-items:end">
-        <div class="field" style="margin-bottom:0"><label>Insumo</label><select id="${kind}-insumo">${insumoOptionsHTML()}</select></div>
+        <div class="field" style="margin-bottom:0"><label>Insumo</label><select id="${kind}-insumo" onchange="renderRecipeVariantSelect('${kind}')">${insumoOptionsHTML()}</select></div>
+        <div class="field" id="${kind}-variante-wrap" style="margin-bottom:0;display:none"><label>Variante</label><select id="${kind}-variante"></select></div>
         <div class="field" style="margin-bottom:0"><label>Cantidad usada</label><input id="${kind}-cant" type="text" placeholder="Ej: 1/3 o 0.5"></div>
         <button class="btn btn-ghost" onclick="addRecetaItem('${kind}')">Agregar</button>
       </div>
     </div>`;
   }).join('');
+  variantesBuilder.forEach(v=>renderRecipeVariantSelect('var-'+v.id));
 }
 function addVariant(){
   variantesBuilder.push({id: uid(), nombre:'', receta: []});
@@ -210,12 +225,9 @@ function updateVariantNombre(vid, val){
   const v = variantesBuilder.find(x=>x.id===vid);
   if(v) v.nombre = val;
 }
-function chipsHTML(kind, list){
-  if(list.length===0) return `<div class="helptext" style="margin:6px 0">Sin insumos agregados aún.</div>`;
-  return list.map((r,idx)=>{
-    const ins = state.insumos.find(i=>i.id===r.insumoId);
-    return `<span class="chip">${r.cantidad} ${ins?.unidad||''} · ${ins?.nombre||'—'} <button onclick="removeRecetaItem('${kind}',${idx})">✕</button></span>`;
-  }).join('');
+function chipsHTML(kind,list){
+  if(!list.length)return `<div class="helptext" style="margin:6px 0">Sin insumos agregados aún.</div>`;
+  return list.map((r,idx)=>{const ins=state.insumos.find(i=>i.id===r.insumoId);const v=varianteInsumo(ins,r.varianteId);return `<span class="chip">${r.cantidad} ${ins?.unidad||''} · ${ins?.nombre||'—'}${v?' — '+v.nombre:''} <button onclick="removeRecetaItem('${kind}',${idx})">✕</button></span>`;}).join('');
 }
 function getBuilderArray(kind){
   if(kind==='mp') return recetaMPBuilder;
@@ -228,14 +240,14 @@ function getBuilderArray(kind){
   return [];
 }
 function addRecetaItem(kind){
-  const insumoId = document.getElementById(kind+'-insumo').value;
-  const cantidad = parseCantidad(document.getElementById(kind+'-cant').value);
-  if(!insumoId || !cantidad || isNaN(cantidad)){ toast('Elige un insumo y una cantidad válida (puedes usar fracciones, ej: 1/3)'); return; }
-  const target = getBuilderArray(kind);
-  target.push({insumoId, cantidad});
-  document.getElementById(kind+'-cant').value='';
-  refreshChips(kind);
-  updatePreview();
+  const insumoId=document.getElementById(kind+'-insumo').value;
+  const cantidad=parseCantidad(document.getElementById(kind+'-cant').value);
+  const ins=state.insumos.find(i=>i.id===insumoId);
+  const varianteId=document.getElementById(kind+'-variante')?.value||null;
+  if(!insumoId||!cantidad||isNaN(cantidad)){toast('Elige un insumo y una cantidad válida');return;}
+  if(insumoTieneVariantes(ins)&&!varianteId){toast('Elige la variante del insumo');return;}
+  const target=getBuilderArray(kind); target.push({insumoId,varianteId:varianteId||null,cantidad});
+  document.getElementById(kind+'-cant').value=''; refreshChips(kind); updatePreview();
 }
 function refreshChips(kind){
   const target = getBuilderArray(kind);
